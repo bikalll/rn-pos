@@ -21,6 +21,7 @@ import { MenuItem } from '../../redux/slices/menuSlice';
 import { addItem, createOrder } from '../../redux/slices/ordersSlice';
 import { CommonActions } from '@react-navigation/native';
 import Toast from '../../components/Toast';
+import { PrintService } from '../../services/printing';
 
 type MenuNavigationProp = any;
 
@@ -327,20 +328,46 @@ const MenuScreen: React.FC = () => {
   };
 
   // Print modal handlers
-  const handlePrint = () => {
-    setPrintModalVisible(false);
-    if (pendingOrderInfo) {
-      const tableName = tablesById[pendingOrderInfo.tableId]?.name || `Table ${pendingOrderInfo.tableId.slice(-6)}`;
-      const message = pendingOrderInfo.isMulti 
-        ? `Placed ${pendingOrderInfo.itemCount} items in ${tableName}`
-        : `${pendingOrderInfo.itemName} added to ${tableName}`;
+  const handlePrint = async () => {
+    if (!pendingOrderInfo) return;
+    
+    try {
+      setPrintModalVisible(false);
       
-      showToast(message, 'success', { 
-        orderId: pendingOrderInfo.orderId, 
-        tableId: pendingOrderInfo.tableId 
-      });
+      // Get the order and table data
+      const order = ordersById[pendingOrderInfo.orderId];
+      const table = tablesById[pendingOrderInfo.tableId];
+      
+      if (!order) {
+        showToast('Order not found', 'error');
+        return;
+      }
+      
+      // Show printing status
+      showToast('Printing tickets...', 'info');
+      
+      // Print KOT/BOT tickets
+      const result = await PrintService.printCombinedTicketsFromOrder(order, table);
+      
+      if (result.success) {
+        const tableName = table?.name || `Table ${pendingOrderInfo.tableId.slice(-6)}`;
+        const message = pendingOrderInfo.isMulti 
+          ? `Placed ${pendingOrderInfo.itemCount} items in ${tableName} - Tickets printed!`
+          : `${pendingOrderInfo.itemName} added to ${tableName} - Tickets printed!`;
+        
+        showToast(message, 'success', { 
+          orderId: pendingOrderInfo.orderId, 
+          tableId: pendingOrderInfo.tableId 
+        });
+      } else {
+        showToast(`Tickets printed but with issues: ${result.message}`, 'warning');
+      }
+    } catch (error: any) {
+      console.error('Print error:', error);
+      showToast(`Failed to print tickets: ${error.message}`, 'error');
+    } finally {
+      setPendingOrderInfo(null);
     }
-    setPendingOrderInfo(null);
   };
 
   const handleCancelPrint = () => {
@@ -348,8 +375,8 @@ const MenuScreen: React.FC = () => {
     if (pendingOrderInfo) {
       const tableName = tablesById[pendingOrderInfo.tableId]?.name || `Table ${pendingOrderInfo.tableId.slice(-6)}`;
       const message = pendingOrderInfo.isMulti 
-        ? `Placed ${pendingOrderInfo.itemCount} items in ${tableName}`
-        : `${pendingOrderInfo.itemName} added to ${tableName}`;
+        ? `Placed ${pendingOrderInfo.itemCount} items in ${tableName} (no tickets printed)`
+        : `${pendingOrderInfo.itemName} added to ${tableName} (no tickets printed)`;
       
       showToast(message, 'success', { 
         orderId: pendingOrderInfo.orderId, 
@@ -671,7 +698,7 @@ const MenuScreen: React.FC = () => {
             </View>
             
             <Text style={styles.modalDescription}>
-              A KOT and/or BOT will be sent to the configured printer.
+              Print KOT (Kitchen) and/or BOT (Bar) tickets for the kitchen staff.
             </Text>
             
             <View style={styles.modalActions}>
