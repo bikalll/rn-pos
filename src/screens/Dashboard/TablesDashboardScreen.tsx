@@ -25,6 +25,9 @@ interface Table {
   currentOrderId?: string;
   totalAmount?: number;
   customerCount?: number;
+  isMerged?: boolean;
+  mergedTableNames?: string[];
+  totalSeats?: number;
 }
 
 const TablesDashboardScreen: React.FC = () => {
@@ -41,12 +44,24 @@ const TablesDashboardScreen: React.FC = () => {
     if (tableIds.length > 0) {
       const realTables: Table[] = tableIds.map((tableId: string) => {
         const table = tablesById[tableId];
-        return {
-          id: table.id,
-          number: parseInt(table.name.replace(/\D/g, '')) || 1,
-          capacity: 4, // Default capacity
-          status: 'available' as const,
-        };
+        if (table.isMerged) {
+          return {
+            id: table.id,
+            number: parseInt(table.name.replace(/\D/g, '')) || 1,
+            capacity: table.totalSeats || table.seats,
+            status: 'available' as const,
+            isMerged: true,
+            mergedTableNames: table.mergedTableNames,
+            totalSeats: table.totalSeats || table.seats,
+          };
+        } else {
+          return {
+            id: table.id,
+            number: parseInt(table.name.replace(/\D/g, '')) || 1,
+            capacity: table.seats,
+            status: 'available' as const,
+          };
+        }
       });
       setTables(realTables);
     } else {
@@ -185,6 +200,20 @@ const TablesDashboardScreen: React.FC = () => {
           </Text>
         </View>
       </View>
+      
+      {/* Show merged table information */}
+      {table.isMerged && table.mergedTableNames && (
+        <View style={styles.mergedInfo}>
+          <Text style={styles.mergedLabel}>Merged Tables:</Text>
+          <Text style={styles.mergedTables}>
+            {table.mergedTableNames.join(' + ')}
+          </Text>
+          <Text style={styles.totalSeats}>
+            Total Seats: {table.totalSeats || table.capacity}
+          </Text>
+        </View>
+      )}
+      
       <TouchableOpacity style={styles.createOrderButton} onPress={() => handleTablePress(table)}>
         <Text style={styles.createOrderButtonText}>
           {table.status === 'occupied' ? 'Manage Order' : 'Create Order'}
@@ -293,6 +322,30 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  mergedInfo: {
+    backgroundColor: colors.primary + '10',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  mergedLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primary,
+    marginBottom: spacing.xs,
+  },
+  mergedTables: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  totalSeats: {
+    fontSize: 12,
+    color: colors.textSecondary,
   },
 });
 

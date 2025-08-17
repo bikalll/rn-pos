@@ -7,6 +7,10 @@ export type Table = {
   description?: string;
   isActive: boolean;
   createdAt: number;
+  isMerged?: boolean;
+  mergedTables?: string[]; // Array of table IDs that are merged
+  mergedTableNames?: string[]; // Array of table names for display
+  totalSeats?: number; // Total seats when merged
 };
 
 export type TablesState = {
@@ -112,6 +116,56 @@ const tablesSlice = createSlice({
       );
       state.nextTableId = highestNumber + 1;
     },
+    mergeTables: (state, action: PayloadAction<{ tableIds: string[]; mergedName?: string }>) => {
+      const { tableIds, mergedName } = action.payload;
+      if (tableIds.length < 2) return;
+      
+      // Create merged table
+      const mergedTableId = `merged-${Date.now()}`;
+      const mergedTableNames = tableIds.map(id => state.tablesById[id]?.name || id);
+      const totalSeats = tableIds.reduce((sum, id) => sum + (state.tablesById[id]?.seats || 0), 0);
+      
+      const mergedTable: Table = {
+        id: mergedTableId,
+        name: mergedName || `Merged (${mergedTableNames.join(' + ')})`,
+        seats: totalSeats,
+        description: `Merged tables: ${mergedTableNames.join(', ')}`,
+        isActive: true,
+        createdAt: Date.now(),
+        isMerged: true,
+        mergedTables: tableIds,
+        mergedTableNames,
+        totalSeats,
+      };
+      
+      // Add merged table
+      state.tablesById[mergedTable.id] = mergedTable;
+      state.tableIds.push(mergedTable.id);
+      
+      // Mark original tables as inactive
+      tableIds.forEach(id => {
+        if (state.tablesById[id]) {
+          state.tablesById[id].isActive = false;
+        }
+      });
+    },
+    unmergeTables: (state, action: PayloadAction<{ mergedTableId: string }>) => {
+      const { mergedTableId } = action.payload;
+      const mergedTable = state.tablesById[mergedTableId];
+      
+      if (mergedTable?.isMerged && mergedTable.mergedTables) {
+        // Reactivate original tables
+        mergedTable.mergedTables.forEach(id => {
+          if (state.tablesById[id]) {
+            state.tablesById[id].isActive = true;
+          }
+        });
+        
+        // Remove merged table
+        delete state.tablesById[mergedTableId];
+        state.tableIds = state.tableIds.filter(id => id !== mergedTableId);
+      }
+    },
   },
 });
 
@@ -123,6 +177,8 @@ export const {
   initializeDefaultTables,
   resetTables,
   clearDuplicates,
+  mergeTables,
+  unmergeTables,
 } = tablesSlice.actions;
 
 export default tablesSlice.reducer;

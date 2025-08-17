@@ -18,8 +18,10 @@ name: "orders",
 initialState,
 reducers: {
 createOrder: {
-prepare: (tableId: string) => ({ payload: { id: nanoid(), tableId } }),
-reducer: (state, action: PayloadAction<{ id: string; tableId: string }>) => {
+prepare: (tableId: string, mergedTableIds?: string[]) => ({ 
+  payload: { id: nanoid(), tableId, mergedTableIds } 
+}),
+reducer: (state, action: PayloadAction<{ id: string; tableId: string; mergedTableIds?: string[] }>) => {
 const order: Order = {
 id: action.payload.id,
 tableId: action.payload.tableId,
@@ -28,6 +30,8 @@ tableId: action.payload.tableId,
         discountPercentage: 0,
         serviceChargePercentage: 0,
         taxPercentage: 0,
+        mergedTableIds: action.payload.mergedTableIds,
+        isMergedOrder: !!action.payload.mergedTableIds,
 createdAt: Date.now(),
 };
 state.ordersById[order.id] = order;

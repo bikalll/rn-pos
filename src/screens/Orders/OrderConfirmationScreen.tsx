@@ -18,6 +18,7 @@ import { RootState } from '../../redux/store';
 import { PrintService } from '../../services/printing';
 import { blePrinter } from '../../services/blePrinter';
 import { removeItem, updateItemQuantity } from '../../redux/slices/ordersSlice';
+import MergeTableModal from '../../components/MergeTableModal';
 
 interface RouteParams {
   orderId: string;
@@ -28,6 +29,7 @@ const OrderConfirmationScreen: React.FC = () => {
   const [modificationNotes, setModificationNotes] = useState('');
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  const [mergeTableModalVisible, setMergeTableModalVisible] = useState(false);
   
   const navigation = useNavigation();
   const route = useRoute();
@@ -263,8 +265,7 @@ const OrderConfirmationScreen: React.FC = () => {
 
   const handleMergeTable = () => {
     setShowOptionsMenu(false);
-    // Handle table merge
-    Alert.alert('Merge Table', 'Table merge feature');
+    setMergeTableModalVisible(true);
   };
 
   const handleApplyDiscount = () => {
@@ -405,6 +406,19 @@ const OrderConfirmationScreen: React.FC = () => {
       <View style={styles.header}>
         <Text style={styles.title}>Order for {tables[tableId]?.name || `Table ${tableId.slice(-6)}`}</Text>
         <Text style={styles.subtitle}>Customer: Guest</Text>
+        
+        {/* Show merged table information */}
+        {tables[tableId]?.isMerged && tables[tableId]?.mergedTableNames && (
+          <View style={styles.mergedTableInfo}>
+            <Text style={styles.mergedTableLabel}>Merged Tables:</Text>
+            <Text style={styles.mergedTableNames}>
+              {tables[tableId].mergedTableNames.join(' + ')}
+            </Text>
+            <Text style={styles.mergedTableSeats}>
+              Total Seats: {tables[tableId]?.totalSeats || tables[tableId]?.seats}
+            </Text>
+          </View>
+        )}
       </View>
 
       <ScrollView style={styles.content}>
@@ -610,10 +624,16 @@ const OrderConfirmationScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
           </View>
-                 </View>
-       </Modal>
-     </SafeAreaView>
-   );
+                         </View>
+      </Modal>
+
+      {/* Merge Table Modal */}
+      <MergeTableModal
+        visible={mergeTableModalVisible}
+        onClose={() => setMergeTableModalVisible(false)}
+      />
+    </SafeAreaView>
+  );
 };
 
 const styles = StyleSheet.create({
@@ -936,6 +956,30 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  mergedTableInfo: {
+    backgroundColor: colors.primary + '10',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.md,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  mergedTableLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primary,
+    marginBottom: spacing.xs,
+  },
+  mergedTableNames: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  mergedTableSeats: {
+    fontSize: 12,
+    color: colors.textSecondary,
   },
 });
 

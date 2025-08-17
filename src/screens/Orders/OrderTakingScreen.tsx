@@ -38,6 +38,11 @@ const OrderTakingScreen: React.FC = () => {
   const menuItems = useSelector((state: RootState) => Object.values(state.menu.itemsById)) as MenuItem[];
   const tables = useSelector((state: RootState) => state.tables.tablesById || {});
   const tableIds = useSelector((state: RootState) => state.tables.tableIds || []);
+  
+  // Get the selected table and check if it's merged
+  const selectedTable = tables[selectedTableId];
+  const isMergedTable = selectedTable?.isMerged;
+  const mergedTableNames = selectedTable?.mergedTableNames || [];
 
   const categories = useMemo(() => ['All', ...Array.from(new Set(menuItems.map((i: MenuItem) => i.category)))], [menuItems]);
   
@@ -63,7 +68,8 @@ const OrderTakingScreen: React.FC = () => {
   const handleAddItem = (item: MenuItem) => {
     let targetOrderId = orderId;
     if (orderId === 'new') {
-      const action: any = dispatch(createOrder(selectedTableId));
+      const mergedTableIds = isMergedTable ? selectedTable?.mergedTables : undefined;
+      const action: any = dispatch(createOrder(selectedTableId, mergedTableIds));
       targetOrderId = action.payload.id;
       navigation.setParams({ tableId: selectedTableId, orderId: targetOrderId } as any);
     }
@@ -166,6 +172,19 @@ const OrderTakingScreen: React.FC = () => {
       <View style={styles.header}>
         <Text style={styles.title}>Add Items to Order</Text>
         <Text style={styles.subtitle}>Add items to the order for {tables[selectedTableId]?.name || `Table ${selectedTableId?.slice(-6)}`}</Text>
+        
+        {/* Show merged table information */}
+        {isMergedTable && mergedTableNames.length > 0 && (
+          <View style={styles.mergedTableInfo}>
+            <Text style={styles.mergedTableLabel}>Merged Tables:</Text>
+            <Text style={styles.mergedTableNames}>
+              {mergedTableNames.join(' + ')}
+            </Text>
+            <Text style={styles.mergedTableSeats}>
+              Total Seats: {selectedTable?.totalSeats || selectedTable?.seats}
+            </Text>
+          </View>
+        )}
       </View>
 
 
@@ -478,6 +497,30 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.textSecondary,
     fontSize: 16,
+  },
+  mergedTableInfo: {
+    backgroundColor: colors.primary + '10',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.md,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  mergedTableLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primary,
+    marginBottom: spacing.xs,
+  },
+  mergedTableNames: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  mergedTableSeats: {
+    fontSize: 12,
+    color: colors.textSecondary,
   },
 });
 
