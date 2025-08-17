@@ -46,7 +46,12 @@ id: string;
 name: string;
 phone?: string;
 email?: string;
+address?: string;
+creditAmount?: number;
 loyaltyPoints?: number;
+visitCount?: number;
+lastVisit?: number;
+createdAt?: number;
 };
 
 export type StaffRole = "Owner" | "Staff" | "Waiter";

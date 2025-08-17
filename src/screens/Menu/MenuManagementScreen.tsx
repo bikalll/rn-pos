@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, Modal, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, Modal, ScrollView, Image } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useDispatch, useSelector } from 'react-redux';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -32,7 +32,7 @@ const MenuManagementScreen: React.FC = () => {
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ name: '', description: '', price: 0, category: '', isAvailable: true, modifiers: [], orderType: 'KOT' });
+    setForm({ name: '', description: '', price: 0, category: '', isAvailable: true, modifiers: [], image: '', orderType: 'KOT' });
     setModalOpen(true);
   };
 
@@ -53,19 +53,134 @@ const MenuManagementScreen: React.FC = () => {
 
   const handleAddImage = async () => {
     try {
+      console.log('Starting image picker...');
+      
+      // Request permissions first
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      console.log('Photo library permission status:', status);
+      
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Permission to access the photo library is required to add images to dishes.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => {
+              // You can add navigation to settings here if needed
+              Alert.alert('Settings', 'Please enable photo library permissions in your device settings.');
+            }}
+          ]
+        );
+        return;
+      }
+
+      console.log('Launching image library...');
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
+        allowsMultipleSelection: false,
       });
 
+      console.log('Image picker result:', result);
+
       if (!result.canceled && result.assets && result.assets[0]) {
-        setForm(prev => ({ ...prev, image: result.assets![0].uri }));
+        const imageUri = result.assets[0].uri;
+        console.log('Selected image URI:', imageUri);
+        
+        // Validate the image URI
+        if (imageUri && imageUri.length > 0) {
+          setForm(prev => ({ ...prev, image: imageUri }));
+          Alert.alert('Success', 'Image added successfully!');
+        } else {
+          console.error('Invalid image URI received');
+          Alert.alert('Error', 'Invalid image selected. Please try again.');
+        }
+      } else {
+        console.log('Image selection was canceled or failed');
       }
     } catch (error) {
       console.error('Image picker error:', error);
+      Alert.alert('Error', 'Failed to add image. Please try again.');
     }
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      console.log('Starting camera...');
+      
+      // Request camera permissions first
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      console.log('Camera permission status:', status);
+      
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Permission to access the camera is required to take photos.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => {
+              Alert.alert('Settings', 'Please enable camera permissions in your device settings.');
+            }}
+          ]
+        );
+        return;
+      }
+
+      console.log('Launching camera...');
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+
+      console.log('Camera result:', result);
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const imageUri = result.assets[0].uri;
+        console.log('Taken photo URI:', imageUri);
+        
+        // Validate the image URI
+        if (imageUri && imageUri.length > 0) {
+          setForm(prev => ({ ...prev, image: imageUri }));
+          Alert.alert('Success', 'Photo taken successfully!');
+        } else {
+          console.error('Invalid image URI received from camera');
+          Alert.alert('Error', 'Invalid photo taken. Please try again.');
+        }
+      } else {
+        console.log('Photo taking was canceled or failed');
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      Alert.alert('Error', 'Failed to take photo. Please try again.');
+    }
+  };
+
+  const showImageOptions = () => {
+    Alert.alert(
+      'Add Image',
+      'Choose how you want to add an image',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Take Photo', onPress: handleTakePhoto },
+        { text: 'Choose from Gallery', onPress: handleAddImage },
+      ]
+    );
+  };
+
+  const handleRemoveImage = () => {
+    Alert.alert(
+      'Remove Image',
+      'Are you sure you want to remove the image?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => {
+          setForm(prev => ({ ...prev, image: '' }));
+        }}
+      ]
+    );
   };
 
   const save = () => {
@@ -73,10 +188,16 @@ const MenuManagementScreen: React.FC = () => {
       Alert.alert('Invalid', 'Please provide name, category and valid price');
       return;
     }
+    
+    console.log('Saving form data:', form);
+    console.log('Image URI:', form.image);
+    
     if (editing) {
+      console.log('Updating existing menu item:', editing.id);
       dispatch(updateMenuItem({ ...editing, ...form }));
     } else {
       const id = `${form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
+      console.log('Creating new menu item with ID:', id);
       dispatch(addMenuItem({ id, ...form }));
     }
     setModalOpen(false);
@@ -91,11 +212,16 @@ const MenuManagementScreen: React.FC = () => {
 
   const renderItem = ({ item }: { item: MenuItem }) => (
     <View style={styles.card}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.name}>{item.name}</Text>
-        {item.description ? <Text style={styles.desc}>{item.description}</Text> : null}
-        <Text style={styles.meta}>{item.category} • Rs {item.price.toFixed(2)}</Text>
-        <Text style={[styles.badge, { backgroundColor: item.isAvailable ? '#1f8f4d' : '#8f1f2a' }]}>{item.isAvailable ? 'Available' : 'Unavailable'}</Text>
+      <View style={styles.cardContent}>
+        {item.image && (
+          <Image source={{ uri: item.image }} style={styles.itemImage} />
+        )}
+        <View style={styles.itemInfo}>
+          <Text style={styles.name}>{item.name}</Text>
+          {item.description ? <Text style={styles.desc}>{item.description}</Text> : null}
+          <Text style={styles.meta}>{item.category} • Rs {item.price.toFixed(2)}</Text>
+          <Text style={[styles.badge, { backgroundColor: item.isAvailable ? '#1f8f4d' : '#8f1f2a' }]}>{item.isAvailable ? 'Available' : 'Unavailable'}</Text>
+        </View>
       </View>
       <View style={styles.actions}>
         <TouchableOpacity style={[styles.btn, styles.btnSecondary]} onPress={() => dispatch(toggleAvailability(item.id))}><Text style={styles.btnText}>{item.isAvailable ? 'Disable' : 'Enable'}</Text></TouchableOpacity>
@@ -188,17 +314,25 @@ const MenuManagementScreen: React.FC = () => {
             {/* Image Section */}
             <View style={styles.imageSection}>
               <Text style={styles.imageLabel}>Dish Image</Text>
-              <TouchableOpacity style={styles.imageButton} onPress={handleAddImage}>
-                {form.image ? (
-                  <View style={styles.imagePreview}>
-                    <Text style={styles.imagePreviewText}>Image Added ✓</Text>
+              {form.image ? (
+                <View style={styles.imageContainer}>
+                  <Image source={{ uri: form.image }} style={styles.imagePreview} />
+                  <View style={styles.imageActions}>
+                    <TouchableOpacity style={styles.imageActionButton} onPress={showImageOptions}>
+                      <Text style={styles.imageActionText}>Change</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.imageActionButton, styles.removeImageButton]} onPress={handleRemoveImage}>
+                      <Text style={styles.imageActionText}>Remove</Text>
+                    </TouchableOpacity>
                   </View>
-                ) : (
+                </View>
+              ) : (
+                <TouchableOpacity style={styles.imageButton} onPress={showImageOptions}>
                   <View style={styles.imagePlaceholder}>
                     <Text style={styles.imagePlaceholderText}>+ Add Image</Text>
                   </View>
-                )}
-              </TouchableOpacity>
+                </TouchableOpacity>
+              )}
             </View>
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.mbtn, styles.cancel]} onPress={() => setModalOpen(false)}><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity>
@@ -257,7 +391,12 @@ const styles = StyleSheet.create({
   imageSection: { marginBottom: spacing.sm },
   imageLabel: { color: colors.textSecondary, fontSize: 14, fontWeight: '600', marginBottom: spacing.xs },
   imageButton: { borderWidth: 1, borderColor: colors.outline, borderRadius: radius.md, padding: spacing.md, backgroundColor: colors.surface2, alignItems: 'center' },
-  imagePreview: { backgroundColor: colors.success, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm },
+  imagePreview: {
+    width: '100%',
+    height: 150,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
   imagePreviewText: { color: 'white', fontWeight: '600' },
   imagePlaceholder: { backgroundColor: colors.primary, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm },
   imagePlaceholderText: { color: 'white', fontWeight: '600' },
@@ -271,6 +410,60 @@ const styles = StyleSheet.create({
   orderTypeButtonText: { color: colors.textPrimary, fontWeight: '600' },
   orderTypeButtonTextActive: { color: 'white' },
   orderTypeStatus: { color: colors.textSecondary, fontSize: 12, textAlign: 'center' },
+  imageContainer: {
+    width: '100%',
+    height: 150,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    marginBottom: spacing.xs,
+  },
+  imagePreviewContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+  },
+  imageActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  imageActionButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.outline,
+  },
+  imageActionText: {
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  removeImageButton: {
+    borderColor: colors.danger,
+  },
+  removeImageButtonText: {
+    color: colors.danger,
+  },
+  cardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  itemImage: {
+    width: 60,
+    height: 60,
+    borderRadius: radius.md,
+    marginRight: spacing.sm,
+    backgroundColor: colors.surface,
+  },
+  itemInfo: {
+    flex: 1,
+  },
 });
 
 export default MenuManagementScreen;

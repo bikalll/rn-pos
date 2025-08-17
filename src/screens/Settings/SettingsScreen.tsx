@@ -45,16 +45,22 @@ const SettingsScreen: React.FC = () => {
       onPress: () => navigation.navigate('BluetoothDebug' as any),
     },
     {
+      title: 'Print Debug',
+      subtitle: 'Test KOT and Receipt printing',
+      icon: '🧪',
+      onPress: () => navigation.navigate('PrintDebug' as any),
+    },
+    {
       title: 'General Settings',
       subtitle: 'App preferences and configuration',
       icon: '⚙️',
       onPress: () => {},
     },
     {
-      title: 'User Management',
+      title: 'Employee Management',
       subtitle: 'Manage staff accounts and permissions',
       icon: '👥',
-      onPress: () => {},
+      onPress: () => navigation.navigate('EmployeeManagement' as any),
     },
     {
       title: 'Backup & Restore',
@@ -88,17 +94,20 @@ const SettingsScreen: React.FC = () => {
             <View style={styles.optionContent}>
               <Text style={styles.optionTitle}>{option.title}</Text>
               <Text style={styles.optionSubtitle}>{option.subtitle}</Text>
-          </View>
+            </View>
             <Text style={styles.arrowIcon}>›</Text>
           </TouchableOpacity>
-        )        )}
+        ))}
       </ScrollView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   header: {
     backgroundColor: colors.background,
     padding: spacing.md,
@@ -116,7 +125,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textSecondary,
   },
-  content: { flex: 1, padding: spacing.md },
+  content: { 
+    flex: 1, 
+    padding: spacing.md 
+  },
   settingOption: {
     flexDirection: 'row',
     alignItems: 'center',

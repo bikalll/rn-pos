@@ -22,8 +22,10 @@ const TableManagementScreen: React.FC = () => {
   const [editingTable, setEditingTable] = useState<any>(null);
   const [newTableName, setNewTableName] = useState('');
   const [newTableSeats, setNewTableSeats] = useState('4');
+  const [newTableDescription, setNewTableDescription] = useState('');
   const [editTableName, setEditTableName] = useState('');
   const [editTableSeats, setEditTableSeats] = useState('4');
+  const [editTableDescription, setEditTableDescription] = useState('');
 
   const dispatch = useDispatch();
   const tables = useSelector((state: RootState) => state.tables.tablesById);
@@ -40,9 +42,10 @@ const TableManagementScreen: React.FC = () => {
   const handleAddTable = () => {
     if (newTableName.trim()) {
       const seats = parseInt(newTableSeats) || 4;
-      dispatch(addTable(newTableName.trim(), seats));
+      dispatch(addTable(newTableName.trim(), seats, newTableDescription.trim() || undefined));
       setNewTableName('');
       setNewTableSeats('4');
+      setNewTableDescription('');
       setIsAddModalVisible(false);
     }
   };
@@ -53,10 +56,12 @@ const TableManagementScreen: React.FC = () => {
       dispatch(updateTable({ 
         id: editingTable.id, 
         name: editTableName.trim(),
-        seats: seats
+        seats: seats,
+        description: editTableDescription.trim() || undefined
       }));
       setEditTableName('');
       setEditTableSeats('4');
+      setEditTableDescription('');
       setEditingTable(null);
       setIsEditModalVisible(false);
     }
@@ -82,6 +87,7 @@ const TableManagementScreen: React.FC = () => {
     setEditingTable(table);
     setEditTableName(table.name);
     setEditTableSeats((table.seats || 4).toString());
+    setEditTableDescription(table.description || '');
     setIsEditModalVisible(true);
   };
 
@@ -94,6 +100,9 @@ const TableManagementScreen: React.FC = () => {
         <View style={styles.tableInfo}>
           <Text style={styles.tableName}>{table.name}</Text>
           <Text style={styles.tableSeats}>{(table.seats || 4)} seats</Text>
+          {table.description && (
+            <Text style={styles.tableDescription}>{table.description}</Text>
+          )}
           <View style={[styles.statusIndicator, { backgroundColor: table.isActive ? colors.success : colors.danger }]}>
             <Text style={styles.statusText}>{table.isActive ? 'Active' : 'Inactive'}</Text>
           </View>
@@ -229,6 +238,14 @@ const TableManagementScreen: React.FC = () => {
               onChangeText={setNewTableSeats}
               keyboardType="numeric"
             />
+            <TextInput
+              style={styles.input}
+              placeholder="Enter table description (optional)"
+              value={newTableDescription}
+              onChangeText={setNewTableDescription}
+              multiline
+              numberOfLines={2}
+            />
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalButtonSecondary]}
@@ -270,6 +287,14 @@ const TableManagementScreen: React.FC = () => {
               value={editTableSeats}
               onChangeText={setEditTableSeats}
               keyboardType="numeric"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Enter table description (optional)"
+              value={editTableDescription}
+              onChangeText={setEditTableDescription}
+              multiline
+              numberOfLines={2}
             />
             <View style={styles.modalActions}>
               <TouchableOpacity
@@ -407,6 +432,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textSecondary,
     marginBottom: spacing.xs,
+  },
+  tableDescription: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+    fontStyle: 'italic',
   },
   statusIndicator: {
     paddingHorizontal: spacing.sm,

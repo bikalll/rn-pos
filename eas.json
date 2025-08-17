@@ -6,24 +6,50 @@
     "development": {
       "distribution": "internal",
       "android": {
-        "gradleCommand": ":app:assembleDebug"
+        "gradleCommand": ":app:assembleDebug",
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_ENABLE_BLUETOOTH": "true",
+        "EXPO_PUBLIC_ENV": "development"
+      },
+      "cache": {
+        "key": "development-{{ platform }}-{{ hash }}"
       }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_ENABLE_BLUETOOTH": "true",
+        "EXPO_PUBLIC_ENV": "preview"
+      },
+      "cache": {
+        "key": "preview-{{ platform }}-{{ hash }}"
       }
     },
     "production": {
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_ENABLE_BLUETOOTH": "true",
+        "EXPO_PUBLIC_ENV": "production"
+      },
+      "cache": {
+        "key": "production-{{ platform }}-{{ hash }}"
       }
     },
     "standalone": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_ENABLE_BLUETOOTH": "true",
+        "EXPO_PUBLIC_ENV": "standalone"
       }
     }
   },

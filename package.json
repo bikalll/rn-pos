@@ -11,7 +11,23 @@
     "build:android-debug": "cd android && gradlew.bat assembleDebug",
     "build:clean": "cd android && gradlew.bat clean",
     "build:full": "npm run build:clean && npm run build:android",
-    "prebuild": "expo prebuild --platform android --clean"
+    "prebuild": "expo prebuild --platform android --clean",
+    "expo:start": "expo start --clear",
+    "expo:start-dev": "expo start --dev-client",
+    "expo:start-tunnel": "expo start --tunnel",
+    "expo:build": "eas build --platform android",
+    "expo:build-ios": "eas build --platform ios",
+    "expo:submit": "eas submit --platform android",
+    "expo:update": "expo update",
+    "expo:install": "expo install",
+    "expo:doctor": "expo doctor",
+    "expo:prebuild": "expo prebuild --clean",
+    "expo:run": "expo run:android",
+    "expo:run-ios": "expo run:ios",
+    "expo:export": "expo export",
+    "expo:publish": "expo publish",
+    "expo:build:clean": "expo prebuild --clean && expo run:android",
+    "expo:build:ios-clean": "expo prebuild --clean && expo run:ios"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.0.2",
@@ -31,6 +47,7 @@
     "expo-network": "~7.1.5",
     "expo-print": "~14.1.4",
     "expo-sharing": "~13.1.5",
+    "expo-splash-screen": "^0.30.10",
     "expo-sqlite": "~15.2.14",
     "expo-status-bar": "~2.2.3",
     "react": "19.0.0",
@@ -47,6 +64,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/react": "~19.0.10",
+    "babel-plugin-module-resolver": "^5.0.0",
     "typescript": "~5.8.3"
   },
   "private": true

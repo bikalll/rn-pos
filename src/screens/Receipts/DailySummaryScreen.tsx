@@ -44,7 +44,7 @@ interface ReceiptData {
 export default function ReceiptsScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPaymentFilter, setSelectedPaymentFilter] = useState<string | null>(null);
-  const [selectedSortOption, setSelectedSortOption] = useState<SortOption>('all');
+  const [selectedSortOption, setSelectedSortOption] = useState<SortOption>('today');
   
   const navigation = useNavigation<DrawerNavigation>();
   

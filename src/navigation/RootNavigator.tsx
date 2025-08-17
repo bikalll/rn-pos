@@ -21,12 +21,13 @@ import InventoryScreen from "../screens/Inventory/InventoryScreen";
 import MenuScreen from "../screens/Menu/MenuScreen";
 import MenuManagementScreen from "../screens/Menu/MenuManagementScreen";
 import ReportsScreen from "../screens/Reports/ReportsScreen";
-import SettingsScreen from "../screens/Settings/SettingsScreen";
-import PrinterSetupScreen from "../screens/Settings/PrinterSetupScreen";
-import TableManagementScreen from "../screens/Settings/TableManagementScreen";
-import BluetoothDebugScreen from "../screens/Settings/BluetoothDebugScreen";
+import CustomerManagementScreen from "../screens/Customers/CustomerManagementScreen";
+// Settings Screens
+import { SettingsScreen, TableManagementScreen, EmployeeManagementScreen, PrinterSetupScreen } from '../screens/Settings';
 import PrintDemo from "../components/PrintDemo";
 import CustomDrawerContent from "../components/CustomDrawerContent";
+import BluetoothDebugScreen from "../screens/Settings/BluetoothDebugScreen";
+import PrintDebugComponent from "../components/PrintDebugComponent";
 
 export { 
   AuthStackParamList, 
@@ -65,7 +66,7 @@ function DashboardStack() {
   const Stack = createNativeStackNavigator();
   return (
     <Stack.Navigator screenOptions={defaultHeader}>
-      <Stack.Screen name="TablesDashboard" component={TablesDashboardScreen} options={withMenuHeader("Tables")} />
+      <Stack.Screen name="TablesDashboard" component={TablesDashboardScreen} options={withMenuHeader("Tables / Room")} />
       <Stack.Screen name="OrderTaking" component={OrderTakingScreen} options={{ title: "New Order" }} />
     </Stack.Navigator>
   );
@@ -120,9 +121,11 @@ function SettingsStack() {
     <Stack.Navigator screenOptions={defaultHeader}>
       <Stack.Screen name="SettingsMain" component={SettingsScreen} options={withMenuHeader("Settings")} />
       <Stack.Screen name="TableManagement" component={TableManagementScreen} options={withMenuHeader("Table Management")} />
+      <Stack.Screen name="EmployeeManagement" component={EmployeeManagementScreen} options={withMenuHeader("Employee Management")} />
       <Stack.Screen name="PrinterSetup" component={PrinterSetupScreen} options={withMenuHeader("Printer Setup")} />
       <Stack.Screen name="PrintDemo" component={PrintDemo} options={withMenuHeader("Printing Demo")} />
       <Stack.Screen name="BluetoothDebug" component={BluetoothDebugScreen} options={withMenuHeader("Bluetooth Debug")} />
+      <Stack.Screen name="PrintDebug" component={PrintDebugComponent} options={withMenuHeader("Print Debug")} />
     </Stack.Navigator>
   );
 }
@@ -146,6 +149,15 @@ function ReportsStack() {
   );
 }
 
+function CustomersStack() {
+  const Stack = createNativeStackNavigator();
+  return (
+    <Stack.Navigator screenOptions={defaultHeader}>
+      <Stack.Screen name="CustomerManagement" component={CustomerManagementScreen} options={withMenuHeader("Customers")} />
+    </Stack.Navigator>
+  );
+}
+
 function AppDrawer() {
   return (
     <Drawer.Navigator
@@ -162,6 +174,7 @@ function AppDrawer() {
       <Drawer.Screen name="Receipts" component={ReceiptsStack} />
       <Drawer.Screen name="Staff" component={StaffStack} />
       <Drawer.Screen name="Inventory" component={InventoryStack} />
+      <Drawer.Screen name="Customers" component={CustomersStack} />
       <Drawer.Screen name="Printer" component={PrinterOnlyStack} />
       <Drawer.Screen name="Reports" component={ReportsStack} />
       <Drawer.Screen name="Settings" component={SettingsStack} />

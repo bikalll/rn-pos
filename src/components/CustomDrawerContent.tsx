@@ -60,7 +60,7 @@ const CustomDrawerContent: React.FC<DrawerContentComponentProps> = ({ navigation
 
       <ScrollView style={styles.menu} contentContainerStyle={{ paddingBottom: spacing.xl }}>
         <DrawerItem
-          label="Tables"
+          label="Tables / Room"
           icon={<MaterialCommunityIcons name="view-dashboard-outline" size={20} color={colors.textPrimary} />}
           onPress={() => goTo('Dashboard')}
           isActive={current === 'Dashboard'}
@@ -95,6 +95,13 @@ const CustomDrawerContent: React.FC<DrawerContentComponentProps> = ({ navigation
           icon={<Feather name="check-square" size={20} color={colors.textPrimary} />}
           onPress={() => goTo('Staff', { screen: 'Attendance' })}
           isActive={current === 'Staff'}
+        />
+        
+        <DrawerItem
+          label="Customers"
+          icon={<Ionicons name="people-outline" size={20} color={colors.textPrimary} />}
+          onPress={() => goTo('Customers')}
+          isActive={current === 'Customers'}
         />
         
         <DrawerItem

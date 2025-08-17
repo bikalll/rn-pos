@@ -29,6 +29,7 @@ interface AttendanceRecord {
   type: 'in' | 'out';
   location?: string;
   address?: string;
+  detailedAddress?: string;
   accuracy?: number;
   latitude?: number;
   longitude?: number;
@@ -78,8 +79,9 @@ const AttendanceScreen: React.FC = () => {
         distanceInterval: 10,
       });
 
-      // Get address from coordinates
+      // Get detailed address from coordinates
       let address = 'Location not available';
+      let detailedAddress = 'Location not available';
       try {
         const addressResponse = await Location.reverseGeocodeAsync({
           latitude: currentLocation.coords.latitude,
@@ -88,12 +90,31 @@ const AttendanceScreen: React.FC = () => {
         
         if (addressResponse.length > 0) {
           const addressData = addressResponse[0];
-          address = [
+          
+          // Create detailed address with more specific information
+          const addressParts = [
+            addressData.name,           // Building name
+            addressData.street,         // Street name
+            addressData.streetNumber,   // Street number
+            addressData.district,       // District/Area
+            addressData.subregion,      // Sub-region
+            addressData.city,           // City
+            addressData.region,         // Region/State
+            addressData.country         // Country
+          ].filter(Boolean);
+          
+          // Create detailed address
+          detailedAddress = addressParts.join(', ');
+          
+          // Create shorter address for display
+          const shortAddressParts = [
             addressData.street,
+            addressData.district || addressData.subregion,
             addressData.city,
-            addressData.region,
             addressData.country
-          ].filter(Boolean).join(', ');
+          ].filter(Boolean);
+          
+          address = shortAddressParts.join(', ');
         }
       } catch (error) {
         console.error('Error getting address:', error);
@@ -103,7 +124,8 @@ const AttendanceScreen: React.FC = () => {
         latitude: currentLocation.coords.latitude,
         longitude: currentLocation.coords.longitude,
         accuracy: currentLocation.coords.accuracy,
-        address: address
+        address: address,
+        detailedAddress: detailedAddress
       };
     } catch (error) {
       console.error('Error getting location:', error);
@@ -161,6 +183,7 @@ const AttendanceScreen: React.FC = () => {
         type: 'in',
         location: 'Photo Check-in',
         address: locationData?.address || 'Location not available',
+        detailedAddress: locationData?.detailedAddress || 'Location not available',
         accuracy: locationData?.accuracy || undefined,
         latitude: locationData?.latitude,
         longitude: locationData?.longitude,
@@ -170,8 +193,8 @@ const AttendanceScreen: React.FC = () => {
       setAttendanceRecords(updatedRecords);
       await saveAttendanceRecords(updatedRecords);
       
-      const locationMessage = locationData?.address 
-        ? `\nLocation: ${locationData.address}\nAccuracy: ${Math.round(locationData.accuracy || 0)}m`
+      const locationMessage = locationData?.detailedAddress 
+        ? `\nLocation: ${locationData.detailedAddress}\nAccuracy: ${Math.round(locationData.accuracy || 0)}m`
         : '\nLocation: Not available';
       
       Alert.alert(
@@ -244,6 +267,7 @@ const AttendanceScreen: React.FC = () => {
         type: 'out',
         location: 'Self Check-out',
         address: locationData?.address || 'Location not available',
+        detailedAddress: locationData?.detailedAddress || 'Location not available',
         accuracy: locationData?.accuracy || undefined,
         latitude: locationData?.latitude,
         longitude: locationData?.longitude,
@@ -253,8 +277,8 @@ const AttendanceScreen: React.FC = () => {
       setAttendanceRecords(updatedRecords);
       await saveAttendanceRecords(updatedRecords);
       
-      const locationMessage = locationData?.address 
-        ? `\nLocation: ${locationData.address}\nAccuracy: ${Math.round(locationData.accuracy || 0)}m`
+      const locationMessage = locationData?.detailedAddress 
+        ? `\nLocation: ${locationData.detailedAddress}\nAccuracy: ${Math.round(locationData.accuracy || 0)}m`
         : '\nLocation: Not available';
       
       Alert.alert(
@@ -347,8 +371,8 @@ const AttendanceScreen: React.FC = () => {
         <Text style={styles.recordTime}>
           {formatTime(item.timestamp)} • {formatDate(item.timestamp)}
         </Text>
-        {item.address && (
-          <Text style={styles.recordLocation}>📍 {item.address}</Text>
+        {item.detailedAddress && (
+          <Text style={styles.recordLocation}>📍 {item.detailedAddress}</Text>
         )}
         {item.accuracy && (
           <Text style={styles.recordAccuracy}>Accuracy: {Math.round(item.accuracy)}m</Text>

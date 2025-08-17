@@ -4,6 +4,7 @@ export type Table = {
   id: string;
   name: string;
   seats: number;
+  description?: string;
   isActive: boolean;
   createdAt: number;
 };
@@ -27,13 +28,14 @@ const tablesSlice = createSlice({
   initialState,
   reducers: {
     addTable: {
-      prepare: (name: string, seats: number = 4) => ({ payload: { name, seats } }),
-      reducer: (state, action: PayloadAction<{ name: string; seats: number }>) => {
+      prepare: (name: string, seats: number = 4, description?: string) => ({ payload: { name, seats, description } }),
+      reducer: (state, action: PayloadAction<{ name: string; seats: number; description?: string }>) => {
         const tableId = `table-${state.nextTableId}`;
         const table: Table = {
           id: tableId,
           name: action.payload.name,
           seats: action.payload.seats,
+          description: action.payload.description,
           isActive: true,
           createdAt: Date.now(),
         };
@@ -42,12 +44,15 @@ const tablesSlice = createSlice({
         state.nextTableId += 1;
       },
     },
-    updateTable: (state, action: PayloadAction<{ id: string; name: string; seats?: number }>) => {
+    updateTable: (state, action: PayloadAction<{ id: string; name: string; seats?: number; description?: string }>) => {
       const table = state.tablesById[action.payload.id];
       if (table) {
         table.name = action.payload.name;
         if (action.payload.seats !== undefined) {
           table.seats = action.payload.seats;
+        }
+        if (action.payload.description !== undefined) {
+          table.description = action.payload.description;
         }
       }
     },
@@ -65,10 +70,10 @@ const tablesSlice = createSlice({
       // Only initialize if we haven't done it before AND there are no tables
       if (!state.isInitialized && state.tableIds.length === 0) {
         const defaultTables = [
-          { id: "table-1", name: "Table 1", seats: 4, isActive: true, createdAt: Date.now() },
-          { id: "table-2", name: "Table 2", seats: 4, isActive: true, createdAt: Date.now() },
-          { id: "table-3", name: "Table 3", seats: 6, isActive: true, createdAt: Date.now() },
-          { id: "table-4", name: "Table 4", seats: 6, isActive: true, createdAt: Date.now() },
+          { id: "table-1", name: "Table 1", seats: 4, description: "Standard 4-seater table", isActive: true, createdAt: Date.now() },
+          { id: "table-2", name: "Table 2", seats: 4, description: "Standard 4-seater table", isActive: true, createdAt: Date.now() },
+          { id: "table-3", name: "Table 3", seats: 6, description: "Large 6-seater table", isActive: true, createdAt: Date.now() },
+          { id: "table-4", name: "Table 4", seats: 6, description: "Large 6-seater table", isActive: true, createdAt: Date.now() },
         ];
         
         defaultTables.forEach(table => {

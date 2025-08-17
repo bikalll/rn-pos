@@ -565,15 +565,17 @@ export async function printHtmlAsync(html: string) {
 
 // Comprehensive printing utility for the entire app
 export class PrintService {
-  static async checkPrinterConnection(): Promise<{ connected: boolean; message: string }> {
+  static async checkPrinterConnection(): Promise<{ connected: boolean; message: string; details?: any }> {
     try {
       // Check if Bluetooth printing is supported
       const { blePrinter } = await import('./blePrinter');
+      const { bluetoothManager } = await import('./bluetoothManager');
       
       if (!blePrinter.isSupported()) {
         return {
           connected: false,
-          message: 'Bluetooth printing not supported on this device'
+          message: 'Bluetooth printing not supported on this device',
+          details: blePrinter.getModuleStatus()
         };
       }
 
@@ -582,32 +584,64 @@ export class PrintService {
       if (!isEnabled) {
         return {
           connected: false,
-          message: 'Bluetooth is not enabled. Please enable Bluetooth to print.'
+          message: 'Bluetooth is not enabled. Please enable Bluetooth to print.',
+          details: { bluetoothEnabled: false }
+        };
+      }
+
+      // Check connection status
+      const connectionHealth = bluetoothManager.getConnectionHealth();
+      if (!connectionHealth.healthy) {
+        return {
+          connected: false,
+          message: `Printer connection issues: ${connectionHealth.issues.join(', ')}`,
+          details: connectionHealth
         };
       }
 
       return {
         connected: true,
-        message: 'Printer connection available'
+        message: 'Printer connection available',
+        details: { 
+          bluetoothEnabled: true,
+          deviceConnected: bluetoothManager.getStatus().connected,
+          currentDevice: bluetoothManager.getStatus().currentDevice
+        }
       };
     } catch (error) {
+      console.error('Printer connection check failed:', error);
       return {
         connected: false,
-        message: 'Unable to check printer connection'
+        message: `Unable to check printer connection: ${error}`,
+        details: { error: String(error) }
       };
     }
   }
 
-  static async printKOTFromOrder(order: any, table: any): Promise<{ success: boolean; message: string }> {
+  static async printKOTFromOrder(order: any, table: any): Promise<{ success: boolean; message: string; fallback?: string }> {
     try {
       const { blePrinter } = await import('./blePrinter');
+      const { bluetoothManager } = await import('./bluetoothManager');
       
       // Check printer connection
       const connectionStatus = await this.checkPrinterConnection();
       if (!connectionStatus.connected) {
+        // Provide fallback option
+        const fallbackMessage = 'Would you like to save the ticket as a file instead?';
         return {
           success: false,
-          message: 'No printer connected. Please connect a printer to print KOT tickets.'
+          message: connectionStatus.message,
+          fallback: fallbackMessage
+        };
+      }
+
+      // Test connection before printing
+      const connectionTest = await bluetoothManager.testConnection();
+      if (!connectionTest) {
+        return {
+          success: false,
+          message: 'Printer connection test failed. Please check your printer connection.',
+          fallback: 'Would you like to save the ticket as a file instead?'
         };
       }
 
@@ -635,23 +669,50 @@ export class PrintService {
         message: 'Kitchen ticket (KOT) sent to printer successfully'
       };
     } catch (error: any) {
+      console.error('KOT print failed:', error);
+      
+      // Provide specific error messages for common issues
+      let errorMessage = error.message;
+      if (error.message.includes('connection')) {
+        errorMessage = 'Printer connection lost. Please reconnect your printer.';
+      } else if (error.message.includes('permission')) {
+        errorMessage = 'Bluetooth permissions required. Please grant permissions in settings.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Printer connection timeout. Check if printer is turned on and in range.';
+      }
+
       return {
         success: false,
-        message: `Failed to print KOT: ${error.message}`
+        message: `Failed to print KOT: ${errorMessage}`,
+        fallback: 'Would you like to save the ticket as a file instead?'
       };
     }
   }
 
-  static async printBOTFromOrder(order: any, table: any): Promise<{ success: boolean; message: string }> {
+  static async printBOTFromOrder(order: any, table: any): Promise<{ success: boolean; message: string; fallback?: string }> {
     try {
       const { blePrinter } = await import('./blePrinter');
+      const { bluetoothManager } = await import('./bluetoothManager');
       
       // Check printer connection
       const connectionStatus = await this.checkPrinterConnection();
       if (!connectionStatus.connected) {
+        // Provide fallback option
+        const fallbackMessage = 'Would you like to save the ticket as a file instead?';
         return {
           success: false,
-          message: 'No printer connected. Please connect a printer to print BOT tickets.'
+          message: connectionStatus.message,
+          fallback: fallbackMessage
+        };
+      }
+
+      // Test connection before printing
+      const connectionTest = await bluetoothManager.testConnection();
+      if (!connectionTest) {
+        return {
+          success: false,
+          message: 'Printer connection test failed. Please check your printer connection.',
+          fallback: 'Would you like to save the ticket as a file instead?'
         };
       }
 
@@ -679,14 +740,112 @@ export class PrintService {
         message: 'Bar ticket (BOT) sent to printer successfully'
       };
     } catch (error: any) {
+      console.error('BOT print failed:', error);
+      
+      // Provide specific error messages for common issues
+      let errorMessage = error.message;
+      if (error.message.includes('connection')) {
+        errorMessage = 'Printer connection lost. Please reconnect your printer.';
+      } else if (error.message.includes('permission')) {
+        errorMessage = 'Bluetooth permissions required. Please grant permissions in settings.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Printer connection timeout. Check if printer is turned on and in range.';
+      }
+
       return {
         success: false,
-        message: `Failed to print BOT: ${error.message}`
+        message: `Failed to print BOT: ${errorMessage}`,
+        fallback: 'Would you like to save the ticket as a file instead?'
       };
     }
   }
 
-  static async printCombinedTicketsFromOrder(order: any, table: any): Promise<{ success: boolean; message: string }> {
+  static async printReceiptFromOrder(order: any, table: any): Promise<{ success: boolean; message: string; fallback?: string }> {
+    try {
+      const { blePrinter } = await import('./blePrinter');
+      const { bluetoothManager } = await import('./bluetoothManager');
+      
+      // Check printer connection
+      const connectionStatus = await this.checkPrinterConnection();
+      if (!connectionStatus.connected) {
+        // Provide fallback option
+        const fallbackMessage = 'Would you like to save the receipt as a file instead?';
+        return {
+          success: false,
+          message: connectionStatus.message,
+          fallback: fallbackMessage
+        };
+      }
+
+      // Test connection before printing
+      const connectionTest = await bluetoothManager.testConnection();
+      if (!connectionTest) {
+        return {
+          success: false,
+          message: 'Printer connection test failed. Please check your printer connection.',
+          fallback: 'Would you like to save the receipt as a file instead?'
+        };
+      }
+
+      // Calculate totals
+      const subtotal = order.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
+      const tax = subtotal * (order.taxPercentage / 100);
+      const serviceCharge = subtotal * (order.serviceChargePercentage / 100);
+      const discount = subtotal * (order.discountPercentage / 100);
+      const total = subtotal + tax + serviceCharge - discount;
+
+      // Print via Bluetooth
+      await blePrinter.printReceipt({
+        restaurantName: 'ARBI POS',
+        receiptId: `R${Date.now()}`,
+        date: new Date(order.createdAt).toLocaleDateString(),
+        time: new Date(order.createdAt).toLocaleTimeString(),
+        table: table?.name || order.tableId,
+        items: order.items.map((item: any) => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price
+        })),
+        taxLabel: `Tax (${order.taxPercentage}%)`,
+        serviceLabel: `Service (${order.serviceChargePercentage}%)`,
+        subtotal,
+        tax,
+        service: serviceCharge,
+        discount: order.discountPercentage > 0 ? discount : 0,
+        total,
+        payment: order.payment ? {
+          method: order.payment.method,
+          amountPaid: order.payment.amountPaid,
+          change: order.payment.amountPaid - total,
+        } : null,
+      });
+
+      return {
+        success: true,
+        message: 'Receipt sent to printer successfully'
+      };
+    } catch (error: any) {
+      console.error('Receipt print failed:', error);
+      
+      // Provide specific error messages for common issues
+      let errorMessage = error.message;
+      if (error.message.includes('connection')) {
+        errorMessage = 'Printer connection lost. Please reconnect your printer.';
+      } else if (error.message.includes('permission')) {
+        errorMessage = 'Bluetooth permissions required. Please grant permissions in settings.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Printer connection timeout. Check if printer is turned on and in range.';
+      }
+
+      return {
+        success: false,
+        message: `Failed to print receipt: ${errorMessage}`,
+        fallback: 'Would you like to save the receipt as a file instead?'
+      };
+    }
+  }
+
+  static async printCombinedTicketsFromOrder(order: any, table: any): Promise<{ success: boolean; message: string; fallback?: string }> {
     try {
       console.log('🖨️ PrintService: Processing order for combined tickets:', {
         orderId: order.id,
@@ -699,13 +858,27 @@ export class PrintService {
       });
 
       const { blePrinter } = await import('./blePrinter');
+      const { bluetoothManager } = await import('./bluetoothManager');
       
       // Check printer connection
       const connectionStatus = await this.checkPrinterConnection();
       if (!connectionStatus.connected) {
+        // Provide fallback option
+        const fallbackMessage = 'Would you like to save the tickets as files instead?';
         return {
           success: false,
-          message: 'No printer connected. Please connect a printer to print KOT/BOT tickets.'
+          message: connectionStatus.message,
+          fallback: fallbackMessage
+        };
+      }
+
+      // Test connection before printing
+      const connectionTest = await bluetoothManager.testConnection();
+      if (!connectionTest) {
+        return {
+          success: false,
+          message: 'Printer connection test failed. Please check your printer connection.',
+          fallback: 'Would you like to save the tickets as files instead?'
         };
       }
 
@@ -731,10 +904,199 @@ export class PrintService {
         message: 'Combined tickets sent to printer successfully'
       };
     } catch (error: any) {
+      console.error('Combined tickets print failed:', error);
+      
+      // Provide specific error messages for common issues
+      let errorMessage = error.message;
+      if (error.message.includes('connection')) {
+        errorMessage = 'Printer connection lost. Please reconnect your printer.';
+      } else if (error.message.includes('permission')) {
+        errorMessage = 'Bluetooth permissions required. Please grant permissions in settings.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Printer connection timeout. Check if printer is turned on and in range.';
+      }
+
       return {
         success: false,
-        message: `Failed to print tickets: ${error.message}`
+        message: `Failed to print tickets: ${errorMessage}`,
+        fallback: 'Would you like to save the tickets as files instead?'
       };
     }
+  }
+
+  // Fallback method to save tickets as files
+  static async saveTicketAsFile(ticketData: any, type: 'KOT' | 'BOT' | 'COMBINED'): Promise<{ success: boolean; message: string; fileUri?: string }> {
+    try {
+      let html = '';
+      
+      if (type === 'KOT') {
+        html = this.generateKOTHTML(ticketData);
+      } else if (type === 'BOT') {
+        html = this.generateBOTHTML(ticketData);
+      } else {
+        html = this.generateCombinedTicketsHTML(ticketData);
+      }
+
+      const { uri } = await Print.printToFileAsync({ 
+        html,
+        base64: false
+      });
+
+      return {
+        success: true,
+        message: `${type} ticket saved as file successfully`,
+        fileUri: uri
+      };
+    } catch (error: any) {
+      console.error('Save ticket as file failed:', error);
+      return {
+        success: false,
+        message: `Failed to save ticket as file: ${error.message}`
+      };
+    }
+  }
+
+  // Generate HTML for KOT ticket
+  private static generateKOTHTML(data: any): string {
+    return `
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .header { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 20px; }
+            .divider { border-top: 1px solid #000; margin: 10px 0; }
+            .item { margin: 5px 0; }
+            .total { font-weight: bold; margin-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">KITCHEN ORDER TICKET</div>
+          <div class="header">ARBI POS</div>
+          <div class="divider"></div>
+          <div>Ticket #${data.ticketId}</div>
+          <div>Date: ${data.date} Time: ${data.time}</div>
+          <div>Table: ${data.table}</div>
+          <div>Est. Time: ${data.estimatedTime}</div>
+          ${data.specialInstructions ? `<div>Special: ${data.specialInstructions}</div>` : ''}
+          <div class="divider"></div>
+          <div class="header">KITCHEN ITEMS:</div>
+          ${data.items.filter((item: any) => item.orderType === 'KOT').map((item: any) => `
+            <div class="item">${item.name} - ${item.quantity} x Rs. ${item.price.toFixed(2)}</div>
+          `).join('')}
+          <div class="divider"></div>
+          <div class="total">PLEASE PREPARE WITH CARE</div>
+          <div>${new Date().toLocaleTimeString()}</div>
+        </body>
+      </html>
+    `;
+  }
+
+  // Generate HTML for BOT ticket
+  private static generateBOTHTML(data: any): string {
+    return `
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .header { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 20px; }
+            .divider { border-top: 1px solid #000; margin: 10px 0; }
+            .item { margin: 5px 0; }
+            .total { font-weight: bold; margin-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">BAR ORDER TICKET</div>
+          <div class="header">ARBI POS</div>
+          <div class="divider"></div>
+          <div>Ticket #${data.ticketId}</div>
+          <div>Date: ${data.date} Time: ${data.time}</div>
+          <div>Table: ${data.table}</div>
+          <div>Est. Time: ${data.estimatedTime}</div>
+          ${data.specialInstructions ? `<div>Special: ${data.specialInstructions}</div>` : ''}
+          <div class="divider"></div>
+          <div class="header">BAR ITEMS:</div>
+          ${data.items.filter((item: any) => item.orderType === 'BOT').map((item: any) => `
+            <div class="item">${item.name} - ${item.quantity} x Rs. ${item.price.toFixed(2)}</div>
+          `).join('')}
+          <div class="divider"></div>
+          <div class="total">PLEASE PREPARE WITH CARE</div>
+          <div>${new Date().toLocaleTimeString()}</div>
+        </body>
+      </html>
+    `;
+  }
+
+  // Generate HTML for combined tickets
+  private static generateCombinedTicketsHTML(data: any): string {
+    const hasKitchenItems = data.items.some((item: any) => item.orderType === 'KOT');
+    const hasBarItems = data.items.some((item: any) => item.orderType === 'BOT');
+    
+    let html = `
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .header { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 20px; }
+            .divider { border-top: 1px solid #000; margin: 10px 0; }
+            .item { margin: 5px 0; }
+            .total { font-weight: bold; margin-top: 20px; }
+            .section { margin-bottom: 30px; }
+          </style>
+        </head>
+        <body>
+    `;
+
+    if (hasKitchenItems) {
+      html += `
+        <div class="section">
+          <div class="header">KITCHEN ORDER TICKET</div>
+          <div class="header">ARBI POS</div>
+          <div class="divider"></div>
+          <div>Ticket #${data.ticketId}</div>
+          <div>Date: ${data.date} Time: ${data.time}</div>
+          <div>Table: ${data.table}</div>
+          <div>Est. Time: ${data.estimatedTime}</div>
+          ${data.specialInstructions ? `<div>Special: ${data.specialInstructions}</div>` : ''}
+          <div class="divider"></div>
+          <div class="header">KITCHEN ITEMS:</div>
+          ${data.items.filter((item: any) => item.orderType === 'KOT').map((item: any) => `
+            <div class="item">${item.name} - ${item.quantity} x Rs. ${item.price.toFixed(2)}</div>
+          `).join('')}
+          <div class="divider"></div>
+          <div class="total">PLEASE PREPARE WITH CARE</div>
+          <div>${new Date().toLocaleTimeString()}</div>
+        </div>
+      `;
+    }
+
+    if (hasBarItems) {
+      html += `
+        <div class="section">
+          <div class="header">BAR ORDER TICKET</div>
+          <div class="header">ARBI POS</div>
+          <div class="divider"></div>
+          <div>Ticket #${data.ticketId}</div>
+          <div>Date: ${data.date} Time: ${data.time}</div>
+          <div>Table: ${data.table}</div>
+          <div>Est. Time: ${data.estimatedTime}</div>
+          ${data.specialInstructions ? `<div>Special: ${data.specialInstructions}</div>` : ''}
+          <div class="divider"></div>
+          <div class="header">BAR ITEMS:</div>
+          ${data.items.filter((item: any) => item.orderType === 'BOT').map((item: any) => `
+            <div class="item">${item.name} - ${item.quantity} x Rs. ${item.price.toFixed(2)}</div>
+          `).join('')}
+          <div class="divider"></div>
+          <div class="total">PLEASE PREPARE WITH CARE</div>
+          <div>${new Date().toLocaleTimeString()}</div>
+        </div>
+      `;
+    }
+
+    html += `
+        </body>
+      </html>
+    `;
+
+    return html;
   }
 }

@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { bluetoothManager, BluetoothDevice, BluetoothStatus } from '../../services/bluetoothManager';
 import { Toast } from '../../services/toastService';
+import PrinterTroubleshooter from '../../components/PrinterTroubleshooter';
 
 interface PrinterSetupScreenProps {
   navigation: any;
@@ -28,6 +29,8 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
   const [isSupported, setIsSupported] = useState<boolean>(false);
   const [moduleStatus, setModuleStatus] = useState<any>(null);
   const [autoConnect, setAutoConnect] = useState<boolean>(false);
+  const [permissionsGranted, setPermissionsGranted] = useState<boolean>(false);
+  const [showTroubleshooter, setShowTroubleshooter] = useState<boolean>(false);
 
   useEffect(() => {
     initializeBluetooth();
@@ -46,11 +49,46 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
         return;
       }
 
+      // Check current permissions status
+      const permissionsGranted = await bluetoothManager.requestPermissions();
+      setPermissionsGranted(permissionsGranted);
+      
+      if (!permissionsGranted) {
+        Toast.show('Bluetooth permissions are required for printer functionality', 'error');
+        return;
+      }
+
       // Check Bluetooth status
       await updateStatus();
     } catch (error) {
       console.error('Bluetooth initialization failed:', error);
       Toast.show('Failed to initialize Bluetooth', 'error');
+    }
+  };
+
+  const requestBluetoothPermissions = async (): Promise<boolean> => {
+    try {
+      const permissionsGranted = await bluetoothManager.requestPermissions();
+      setPermissionsGranted(permissionsGranted);
+      if (!permissionsGranted) {
+        Alert.alert(
+          'Permissions Required',
+          'Bluetooth and Location permissions are required for printer functionality. Please grant all permissions in settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => {
+              // You can add navigation to settings here if needed
+              Toast.show('Please enable permissions in device settings', 'info');
+            }}
+          ]
+        );
+      }
+      return permissionsGranted;
+    } catch (error) {
+      console.error('Permission request failed:', error);
+      Toast.show('Failed to request permissions', 'error');
+      setPermissionsGranted(false);
+      return false;
     }
   };
 
@@ -61,6 +99,11 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
 
   const handleEnableBluetooth = async () => {
     try {
+      if (!permissionsGranted) {
+        Toast.show('Bluetooth permissions required. Please request permissions first.', 'error');
+        return;
+      }
+      
       const success = await bluetoothManager.enableBluetooth();
       if (success) {
         Toast.show('Bluetooth enabled successfully', 'success');
@@ -75,6 +118,11 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
 
   const handleScanDevices = async () => {
     try {
+      if (!permissionsGranted) {
+        Toast.show('Bluetooth permissions required. Please request permissions first.', 'error');
+        return;
+      }
+      
       setStatus(prev => ({ ...prev, scanning: true }));
       const discoveredDevices = await bluetoothManager.scanDevices();
       setDevices(discoveredDevices);
@@ -89,6 +137,11 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
 
   const handleConnectDevice = async (device: BluetoothDevice) => {
     try {
+      if (!permissionsGranted) {
+        Toast.show('Bluetooth permissions required. Please request permissions first.', 'error');
+        return;
+      }
+      
       const connected = await bluetoothManager.connectToDevice(device);
       if (connected) {
         Toast.show(`Connected to ${device.name}`, 'success');
@@ -103,6 +156,11 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
 
   const handleDisconnect = async () => {
     try {
+      if (!permissionsGranted) {
+        Toast.show('Bluetooth permissions required. Please request permissions first.', 'error');
+        return;
+      }
+      
       await bluetoothManager.disconnect();
       Toast.show('Disconnected from printer', 'success');
       await updateStatus();
@@ -113,6 +171,11 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
 
   const handleTestPrint = async () => {
     try {
+      if (!permissionsGranted) {
+        Toast.show('Bluetooth permissions required. Please request permissions first.', 'error');
+        return;
+      }
+      
       const success = await bluetoothManager.testConnection();
       if (success) {
         Toast.show('Test print successful', 'success');
@@ -144,22 +207,35 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
       <View style={styles.deviceActions}>
         {item.connected ? (
           <TouchableOpacity
-            style={[styles.actionButton, styles.disconnectButton]}
+            style={getButtonStyle([styles.actionButton, styles.disconnectButton], !permissionsGranted)}
             onPress={handleDisconnect}
+            disabled={!permissionsGranted}
           >
-            <Text style={styles.buttonText}>Disconnect</Text>
+            <Text style={!permissionsGranted ? styles.disabledButtonText : styles.buttonText}>
+              Disconnect
+            </Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.actionButton, styles.connectButton]}
+            style={getButtonStyle([styles.actionButton, styles.connectButton], !permissionsGranted)}
             onPress={() => handleConnectDevice(item)}
+            disabled={!permissionsGranted}
           >
-            <Text style={styles.buttonText}>Connect</Text>
+            <Text style={!permissionsGranted ? styles.disabledButtonText : styles.buttonText}>
+              Connect
+            </Text>
           </TouchableOpacity>
         )}
       </View>
     </View>
   );
+
+  const getButtonStyle = (baseStyle: any, isDisabled: boolean = false) => {
+    if (isDisabled) {
+      return [baseStyle, styles.disabledButton];
+    }
+    return baseStyle;
+  };
 
   const renderStatusCard = () => (
     <View style={styles.statusCard}>
@@ -168,6 +244,12 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
         <Text style={styles.statusLabel}>Module:</Text>
         <Text style={[styles.statusValue, isSupported ? styles.successText : styles.errorText]}>
           {isSupported ? 'Available' : 'Not Available'}
+        </Text>
+      </View>
+      <View style={styles.statusRow}>
+        <Text style={styles.statusLabel}>Permissions:</Text>
+        <Text style={[styles.statusValue, permissionsGranted ? styles.successText : styles.errorText]}>
+          {permissionsGranted ? 'Granted' : 'Not Granted'}
         </Text>
       </View>
       <View style={styles.statusRow}>
@@ -196,6 +278,23 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
     </View>
   );
 
+  if (showTroubleshooter) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => setShowTroubleshooter(false)}
+          >
+            <Text style={styles.backButtonText}>← Back</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>Printer Troubleshooter</Text>
+        </View>
+        <PrinterTroubleshooter />
+      </SafeAreaView>
+    );
+  }
+
   if (!isSupported) {
     return (
       <SafeAreaView style={styles.container}>
@@ -223,49 +322,84 @@ export default function PrinterSetupScreen({ navigation }: PrinterSetupScreenPro
       <ScrollView style={styles.scrollView}>
         {renderStatusCard()}
 
+        {!permissionsGranted && (
+          <View style={styles.permissionWarningCard}>
+            <Text style={styles.permissionWarningTitle}>⚠️ Permissions Required</Text>
+            <Text style={styles.permissionWarningText}>
+              Bluetooth and Location permissions are required to scan for and connect to printers. 
+              Please use the "Request Permissions" button above to grant the necessary permissions.
+            </Text>
+          </View>
+        )}
+
         <View style={styles.controlsCard}>
           <Text style={styles.sectionTitle}>Controls</Text>
           
+          <TouchableOpacity
+            style={[styles.actionButton, styles.secondaryButton]}
+            onPress={requestBluetoothPermissions}
+          >
+            <Text style={styles.buttonText}>Request Permissions</Text>
+          </TouchableOpacity>
+          
           {!status.enabled && (
             <TouchableOpacity
-              style={[styles.actionButton, styles.primaryButton]}
+              style={getButtonStyle([styles.actionButton, styles.primaryButton], !permissionsGranted)}
               onPress={handleEnableBluetooth}
+              disabled={!permissionsGranted}
             >
-              <Text style={styles.buttonText}>Enable Bluetooth</Text>
+              <Text style={!permissionsGranted ? styles.disabledButtonText : styles.buttonText}>
+                Enable Bluetooth
+              </Text>
             </TouchableOpacity>
           )}
 
           {status.enabled && (
             <>
               <TouchableOpacity
-                style={[styles.actionButton, styles.primaryButton]}
+                style={getButtonStyle([styles.actionButton, styles.primaryButton], !permissionsGranted)}
                 onPress={handleScanDevices}
-                disabled={status.scanning}
+                disabled={status.scanning || !permissionsGranted}
               >
                 {status.scanning ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.buttonText}>Scan for Devices</Text>
+                  <Text style={!permissionsGranted ? styles.disabledButtonText : styles.buttonText}>
+                    Scan for Devices
+                  </Text>
                 )}
               </TouchableOpacity>
 
               {status.connected && (
                 <>
                   <TouchableOpacity
-                    style={[styles.actionButton, styles.secondaryButton]}
+                    style={getButtonStyle([styles.actionButton, styles.secondaryButton], !permissionsGranted)}
                     onPress={handleTestPrint}
+                    disabled={!permissionsGranted}
                   >
-                    <Text style={styles.buttonText}>Test Print</Text>
+                    <Text style={!permissionsGranted ? styles.disabledButtonText : styles.buttonText}>
+                      Test Print
+                    </Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity
-                    style={[styles.actionButton, styles.dangerButton]}
+                    style={getButtonStyle([styles.actionButton, styles.dangerButton], !permissionsGranted)}
                     onPress={handleDisconnect}
+                    disabled={!permissionsGranted}
                   >
-                    <Text style={styles.buttonText}>Disconnect</Text>
+                    <Text style={!permissionsGranted ? styles.disabledButtonText : styles.buttonText}>
+                      Disconnect
+                    </Text>
                   </TouchableOpacity>
                 </>
               )}
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.infoButton]}
+                onPress={() => setShowTroubleshooter(true)}
+              >
+                <Text style={styles.buttonText}>🛠️ Troubleshooter</Text>
+              </TouchableOpacity>
             </>
           )}
         </View>
@@ -385,14 +519,26 @@ const styles = StyleSheet.create({
   dangerButton: {
     backgroundColor: '#F44336',
   },
+  infoButton: {
+    backgroundColor: '#2196F3',
+  },
   connectButton: {
     backgroundColor: '#4CAF50',
   },
   disconnectButton: {
     backgroundColor: '#F44336',
   },
+  disabledButton: {
+    opacity: 0.5,
+    backgroundColor: '#ccc',
+  },
   buttonText: {
     color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  disabledButtonText: {
+    color: '#999',
     fontSize: 14,
     fontWeight: '500',
   },
@@ -476,6 +622,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#333',
   },
+  permissionWarningCard: {
+    backgroundColor: '#fff3cd',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  permissionWarningTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#856404',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  permissionWarningText: {
+    fontSize: 14,
+    color: '#856404',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
   unsupportedContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -501,5 +671,27 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 16,
+  },
+  backButtonText: {
+    fontSize: 16,
+    color: '#2196F3',
+    fontWeight: '500',
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
   },
 });

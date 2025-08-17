@@ -53,8 +53,16 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "The app accesses your photos to let you share them with your friends.",
-          "cameraPermission": "The app accesses your camera to let you share photos with your friends."
+          "photosPermission": "This app accesses your photos to let you share them with your friends.",
+          "cameraPermission": "This app accesses your camera to take photos with your friends."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "This app uses location to track attendance accurately.",
+          "locationAlwaysPermission": "This app uses location to track attendance accurately.",
+          "locationWhenInUsePermission": "This app uses location to track attendance accurately."
         }
       ]
     ],
@@ -63,14 +71,18 @@
         "projectId": "8a3a9553-7e86-4d63-b689-b441723699b3"
       }
     },
-    "updates": {
-      "enabled": false,
-      "checkAutomatically": "ON_ERROR_RECOVERY"
-    },
+    "runtimeVersion": "1.0.0",
     "scheme": "rn-pos",
     "platforms": [
       "android",
       "ios"
-    ]
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "jsEngine": "hermes",
+    "experiments": {
+      "tsconfigPaths": true
+    }
   }
 }

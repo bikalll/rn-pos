@@ -58,6 +58,60 @@ const BluetoothDebugScreen: React.FC = () => {
     }
   };
 
+  const testAllPrintMethods = async () => {
+    setLoading(true);
+    try {
+      const result = await blePrinter.testAllPrintMethods();
+      
+      if (result.success) {
+        const passedTests = Object.entries(result.results)
+          .filter(([_, passed]) => passed)
+          .map(([test, _]) => test)
+          .join(', ');
+        
+        Alert.alert(
+          'Print Tests Completed', 
+          `✅ Passed: ${passedTests}\n\n❌ Failed: ${Object.keys(result.errors).join(', ')}\n\nCheck console for detailed results.`
+        );
+      } else {
+        Alert.alert(
+          'All Print Tests Failed', 
+          `All printing methods failed. Check console for detailed error information.\n\nErrors: ${JSON.stringify(result.errors, null, 2)}`
+        );
+      }
+      
+      // Refresh diagnostics
+      await runDiagnostics();
+    } catch (error) {
+      Alert.alert('Error', `Comprehensive test error: ${error}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const retryModuleLoad = async () => {
+    setLoading(true);
+    try {
+      const success = blePrinter.retryLoadModule();
+      
+      if (success) {
+        Alert.alert('Success', 'Bluetooth module loaded successfully!');
+      } else {
+        Alert.alert(
+          'Module Load Failed', 
+          'Failed to load Bluetooth module. Check console for detailed error information.'
+        );
+      }
+      
+      // Refresh diagnostics
+      await runDiagnostics();
+    } catch (error) {
+      Alert.alert('Error', `Module load error: ${error}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const forceReconnect = async () => {
     if (!debugInfo?.currentDevice?.address) {
       Alert.alert('Error', 'No device connected to reconnect to');
@@ -99,15 +153,62 @@ const BluetoothDebugScreen: React.FC = () => {
   const renderDebugSection = (title: string, data: any) => (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.sectionContent}>
-        {Object.entries(data).map(([key, value]) => (
-          <Text key={key} style={styles.debugText}>
-            <Text style={styles.debugKey}>{key}:</Text> {JSON.stringify(value, null, 2)}
-          </Text>
-        ))}
-      </View>
+      <Text style={styles.debugText}>{JSON.stringify(data, null, 2)}</Text>
     </View>
   );
+
+  const renderModuleStatus = () => {
+    const moduleStatus = blePrinter.debugModuleStatus();
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Module Status</Text>
+        <View style={styles.statusItem}>
+          <Text style={styles.statusLabel}>Module Loaded:</Text>
+          <Text style={styles.statusValue}>
+            {moduleStatus.moduleLoaded ? '✅ Yes' : '❌ No'}
+          </Text>
+        </View>
+        <View style={styles.statusItem}>
+          <Text style={styles.statusLabel}>BluetoothManager:</Text>
+          <Text style={styles.statusValue}>
+            {moduleStatus.BluetoothManager ? '✅ Loaded' : '❌ Not Loaded'}
+          </Text>
+        </View>
+        <View style={styles.statusItem}>
+          <Text style={styles.statusLabel}>BluetoothEscposPrinter:</Text>
+          <Text style={styles.statusValue}>
+            {moduleStatus.BluetoothEscposPrinter ? '✅ Loaded' : '❌ Not Loaded'}
+          </Text>
+        </View>
+        <View style={styles.statusItem}>
+          <Text style={styles.statusLabel}>Required Methods:</Text>
+          <Text style={styles.statusValue}>
+            {moduleStatus.methodCheck.available ? '✅ All Available' : `❌ Missing: ${moduleStatus.methodCheck.missing.join(', ')}`}
+          </Text>
+        </View>
+        <View style={styles.statusItem}>
+          <Text style={styles.statusLabel}>ALIGN Constants:</Text>
+          <Text style={styles.statusValue}>
+            {typeof moduleStatus.alignConstants === 'object' ? '✅ Available' : '❌ Not Available'}
+          </Text>
+        </View>
+        {moduleStatus.moduleLoadError && (
+          <View style={styles.statusItem}>
+            <Text style={styles.statusLabel}>Load Error:</Text>
+            <Text style={[styles.statusValue, { color: 'red' }]}>
+              {moduleStatus.moduleLoadError}
+            </Text>
+          </View>
+        )}
+        <TouchableOpacity 
+          style={styles.debugButton} 
+          onPress={() => Alert.alert('Module Details', JSON.stringify(moduleStatus, null, 2))}
+        >
+          <Text style={styles.debugButtonText}>View Full Module Details</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   return (
     <ScrollView style={styles.container}>
@@ -191,6 +292,22 @@ const BluetoothDebugScreen: React.FC = () => {
             </TouchableOpacity>
 
             <TouchableOpacity 
+              style={[styles.actionButton, styles.testButton]} 
+              onPress={testAllPrintMethods}
+              disabled={loading || !debugInfo.deviceConnected}
+            >
+              <Text style={styles.buttonText}>🔍 Test All Print Methods</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.reconnectButton]} 
+              onPress={retryModuleLoad}
+              disabled={loading}
+            >
+              <Text style={styles.buttonText}>🔄 Retry Module Load</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
               style={[styles.actionButton, styles.reconnectButton]} 
               onPress={forceReconnect}
               disabled={loading || !debugInfo.deviceConnected}
@@ -219,6 +336,9 @@ const BluetoothDebugScreen: React.FC = () => {
               )}
             </View>
           </View>
+
+          {/* Module Status */}
+          {renderModuleStatus()}
 
           {/* Connection Details */}
           {connectionDetails && (
@@ -382,6 +502,18 @@ const styles = StyleSheet.create({
   debugKey: {
     fontWeight: 'bold',
     color: '#333',
+  },
+  debugButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  debugButtonText: {
+    color: '#fff',
+    fontWeight: '600',
   },
 });
 
