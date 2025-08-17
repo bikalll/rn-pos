@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, shadow } from '../../theme';
 import { RootState } from '../../redux/store';
 import { setPayment, completeOrder, removeItem, updateItemQuantity } from '../../redux/slices/ordersSlice';
-import { PrintService, printReceipt } from '../../services/printing';
+import { PrintService } from '../../services/printing';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { OrdersStackParamList } from '../../navigation/types';
 
@@ -190,7 +190,10 @@ const OrderManagementScreen: React.FC = () => {
                 cashier: "POS System"
               };
 
-              await printReceipt(receiptData);
+              const result = await PrintService.printReceiptFromOrder(order, tables[order.tableId]);
+              if (!result.success) {
+                throw new Error(result.message);
+              }
               Alert.alert('Success', 'Receipt printed successfully!', [
                 {
                   text: 'OK',

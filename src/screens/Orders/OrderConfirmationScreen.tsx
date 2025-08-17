@@ -121,7 +121,7 @@ const OrderConfirmationScreen: React.FC = () => {
                 navigation.navigate('Orders' as any, { screen: 'OngoingOrders' } as any);
               }
             }
-          ]
+          ] as any
         );
       }
     } catch (error: any) {
@@ -136,7 +136,7 @@ const OrderConfirmationScreen: React.FC = () => {
               navigation.navigate('Orders' as any, { screen: 'OngoingOrders' } as any);
             }
           }
-        ]
+        ] as any
       );
     }
   };
@@ -158,7 +158,7 @@ const OrderConfirmationScreen: React.FC = () => {
                 navigation.navigate('Orders' as any, { screen: 'OngoingOrders' } as any);
               }
             }
-          ]
+          ] as any
         );
       }
     } catch (error: any) {
@@ -172,6 +172,77 @@ const OrderConfirmationScreen: React.FC = () => {
               // Navigate to ongoing orders
               navigation.navigate('Orders' as any, { screen: 'OngoingOrders' } as any);
             }
+          }
+        ]
+      );
+    }
+  };
+
+  const handlePrintPreReceipt = async () => {
+    try {
+      // Show printing status
+      Alert.alert('Printing...', 'Generating pre-receipt for customer...');
+      
+      // Create pre-receipt data (customer copy before payment)
+      const preReceiptData = {
+        restaurantName: 'HOUSE OF HOSPITALITY',
+        receiptId: `PRE-${Date.now().toString().slice(-6)}`,
+        date: new Date().toLocaleDateString(),
+        time: new Date().toLocaleTimeString(),
+        table: tables[tableId]?.name || `Table ${tableId.slice(-6)}`,
+        items: orderWithOrderTypes.items.map((item: any) => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price
+        })),
+        taxLabel: `Tax (${orderWithOrderTypes.taxPercentage || 0}%)`,
+        serviceLabel: `Service (${orderWithOrderTypes.serviceChargePercentage || 0}%)`,
+        subtotal: calculateSubtotal(),
+        tax: calculateSubtotal() * ((orderWithOrderTypes.taxPercentage || 0) / 100),
+        service: calculateSubtotal() * ((orderWithOrderTypes.serviceChargePercentage || 0) / 100),
+        discount: calculateSubtotal() * ((orderWithOrderTypes.discountPercentage || 0) / 100),
+        total: calculateTotal(),
+        payment: null, // No payment info for pre-receipt
+        isPreReceipt: true // Flag to indicate this is a pre-receipt
+      };
+
+      // Print pre-receipt using the same physical printer
+      const result = await PrintService.printReceiptFromOrder(
+        { ...orderWithOrderTypes, ...preReceiptData }, 
+        tables[tableId]
+      );
+      
+      if (result.success) {
+        Alert.alert('Success', 'Pre-receipt printed successfully for customer!');
+      } else {
+        Alert.alert(
+          'Print Failed', 
+          result.message,
+          [
+            {
+              text: 'Try Again',
+              onPress: () => handlePrintPreReceipt()
+            },
+            {
+              text: 'Continue without printing',
+              style: 'cancel'
+            }
+          ]
+        );
+      }
+    } catch (error: any) {
+      console.error('Pre-receipt print error:', error);
+      Alert.alert(
+        'Print Error', 
+        `Failed to print pre-receipt: ${error.message}`,
+        [
+          {
+            text: 'Try Again',
+            onPress: () => handlePrintPreReceipt()
+          },
+          {
+            text: 'Continue without printing',
+            style: 'cancel'
           }
         ]
       );
@@ -225,10 +296,44 @@ const OrderConfirmationScreen: React.FC = () => {
         Alert.alert('Success', result.message);
         setPrintModalVisible(false);
       } else {
+        // Show error with fallback option
         Alert.alert(
           'Print Failed', 
           result.message,
           [
+            {
+              text: 'Save as File',
+              onPress: async () => {
+                try {
+                  const ticketData = {
+                    ticketId: `TKT-${Date.now()}`,
+                    date: new Date(orderWithOrderTypes.createdAt).toLocaleDateString(),
+                    time: new Date(orderWithOrderTypes.createdAt).toLocaleTimeString(),
+                    table: tables[tableId]?.name || orderWithOrderTypes.tableId,
+                    items: orderWithOrderTypes.items.map((item: any) => ({
+                      name: item.name,
+                      quantity: item.quantity,
+                      price: item.price,
+                      orderType: item.orderType
+                    })),
+                    estimatedTime: '20-30 minutes',
+                    specialInstructions: orderWithOrderTypes.specialInstructions
+                  };
+
+                  const saveResult = await PrintService.saveTicketAsFile(ticketData, 'COMBINED');
+                  if (saveResult.success) {
+                    Alert.alert('Success', 'Tickets saved as file successfully!');
+                  } else {
+                    Alert.alert('Error', `Failed to save tickets: ${saveResult.message}`);
+                  }
+                  setPrintModalVisible(false);
+                } catch (error: any) {
+                  console.error('Save ticket failed:', error);
+                  Alert.alert('Error', `Failed to save tickets: ${error.message}`);
+                  setPrintModalVisible(false);
+                }
+              }
+            },
             {
               text: 'Continue without printing',
               onPress: () => {
@@ -237,7 +342,7 @@ const OrderConfirmationScreen: React.FC = () => {
                 navigation.navigate('Orders' as any, { screen: 'OngoingOrders' } as any);
               }
             }
-          ]
+          ] as any
         );
       }
     } catch (error: any) {
@@ -246,6 +351,10 @@ const OrderConfirmationScreen: React.FC = () => {
         'Error', 
         `Failed to print tickets: ${error.message}`,
         [
+          {
+            text: 'Try Again',
+            onPress: () => handlePrint()
+          },
           {
             text: 'Continue without printing',
             onPress: () => {
@@ -304,8 +413,13 @@ const OrderConfirmationScreen: React.FC = () => {
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Current Order</Text>
             <View style={styles.sectionActions}>
-              <TouchableOpacity style={styles.actionButton}>
-                <Ionicons name="print" size={20} color={colors.textSecondary} />
+              <TouchableOpacity 
+                style={styles.actionButton}
+                onPress={handlePrintPreReceipt}
+                activeOpacity={0.7}
+                accessibilityLabel="Print Pre-Receipt"
+              >
+                <Ionicons name="print" size={20} color={colors.primary} />
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.actionButton}
