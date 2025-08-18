@@ -1,23 +1,24 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
   TouchableOpacity,
   TextInput,
   Alert,
   FlatList,
   Image,
-  ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../../redux/store';
+import { selectActiveTables } from '../../redux/slices/tablesSlice';
 import { addItem, removeItem, updateItemQuantity, createOrder } from '../../redux/slices/ordersSlice';
-import { colors, spacing, radius } from '../../theme';
 import { MenuItem } from '../../redux/slices/menuSlice';
+import { colors, spacing, radius, shadow } from '../../theme';
 
 interface RouteParams {
   tableId: string;
@@ -31,29 +32,25 @@ const OrderTakingScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const dispatch = useDispatch();
+  const insets = useSafeAreaInsets();
   
   const { tableId, orderId } = route.params as RouteParams;
   const [selectedTableId, setSelectedTableId] = useState(tableId);
   const order = useSelector((state: RootState) => state.orders.ordersById[orderId]);
   const menuItems = useSelector((state: RootState) => Object.values(state.menu.itemsById)) as MenuItem[];
-  const tables = useSelector((state: RootState) => state.tables.tablesById || {});
-  const tableIds = useSelector((state: RootState) => state.tables.tableIds || []);
+  const activeTables = useSelector(selectActiveTables);
   
   // Get the selected table and check if it's merged
-  const selectedTable = tables[selectedTableId];
+  const selectedTable = activeTables.find(t => t.id === selectedTableId);
   const isMergedTable = selectedTable?.isMerged;
   const mergedTableNames = selectedTable?.mergedTableNames || [];
 
   const categories = useMemo(() => ['All', ...Array.from(new Set(menuItems.map((i: MenuItem) => i.category)))], [menuItems]);
   
   // Debug: Log table information
-  const activeTables = tableIds.map((id: string) => tables[id]).filter((table: any) => table && table.isActive);
   console.log('=== TABLE DEBUG INFO ===');
-  console.log('Table IDs array:', tableIds);
-  console.log('Tables object keys:', Object.keys(tables));
   console.log('Active tables count:', activeTables.length);
   console.log('Active tables:', activeTables.map((t: any) => ({ id: t.id, name: t.name, isActive: t.isActive })));
-  console.log('All tables:', Object.values(tables).map((t: any) => ({ id: t.id, name: t.name, isActive: t.isActive })));
   console.log('=== END DEBUG INFO ===');
 
   const filteredItems = useMemo(() => (
@@ -168,10 +165,10 @@ const OrderTakingScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top','bottom','left','right']}>
       <View style={styles.header}>
         <Text style={styles.title}>Add Items to Order</Text>
-        <Text style={styles.subtitle}>Add items to the order for {tables[selectedTableId]?.name || `Table ${selectedTableId?.slice(-6)}`}</Text>
+        <Text style={styles.subtitle}>Add items to the order for {selectedTable?.name || `Table ${selectedTableId?.slice(-6)}`}</Text>
         
         {/* Show merged table information */}
         {isMergedTable && mergedTableNames.length > 0 && (
@@ -218,6 +215,7 @@ const OrderTakingScreen: React.FC = () => {
         keyExtractor={(item) => item.id}
         style={styles.menuList}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: spacing.lg }}
         ListEmptyComponent={() => (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No items found.</Text>
@@ -226,10 +224,10 @@ const OrderTakingScreen: React.FC = () => {
       />
 
       {order && order.items.length > 0 && (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: spacing.md + insets.bottom }] }>
           <View style={styles.footerSummary}>
             <Text style={styles.footerSummaryText}>
-              {tables[selectedTableId]?.name || `Table ${selectedTableId.slice(-6)}`} • {totalItemsCount()} items
+              {selectedTable?.name || `Table ${selectedTableId.slice(-6)}`} • {totalItemsCount()} items
             </Text>
             <Text style={styles.footerSummaryTotal}>Rs. {calculateTotal().toFixed(2)}</Text>
           </View>

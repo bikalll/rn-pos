@@ -14,33 +14,70 @@ import { colors, spacing, radius, shadow } from '../theme';
 import { Table } from '../redux/slices/tablesSlice';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../redux/store';
-import { mergeTables } from '../redux/slices/tablesSlice';
+import { mergeTables, selectVisibleTables } from '../redux/slices/tablesSlice';
+import { mergeOrders } from '../redux/slices/ordersSlice';
+import { useNavigation } from '@react-navigation/native';
 
 interface MergeTableModalProps {
   visible: boolean;
   onClose: () => void;
+  baseTableId?: string; // When launched from an ongoing order, the clicked table
 }
 
-const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) => {
+const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose, baseTableId }) => {
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [mergedName, setMergedName] = useState('');
   
   const dispatch = useDispatch();
+  const navigation = useNavigation();
   const tables = useSelector((state: RootState) => state.tables.tablesById);
-  const tableIds = useSelector((state: RootState) => state.tables.tableIds);
-  
-  // Get only active, non-merged tables
-  const availableTables = tableIds
-    .map(id => tables[id])
-    .filter(table => table && table.isActive && !table.isMerged);
+  const availableTables = useSelector(selectVisibleTables);
+  const ongoingOrders = useSelector((state: RootState) => state.orders.ordersById);
+  const ongoingOrderIds = useSelector((state: RootState) => state.orders.ongoingOrderIds);
+
+  const isTableOccupied = (tableId: string) => {
+    return ongoingOrderIds.some((orderId: string) => {
+      const order = ongoingOrders[orderId];
+      return order && order.tableId === tableId && order.status === 'ongoing';
+    });
+  };
 
   const toggleTableSelection = (tableId: string) => {
-    const newSelection = new Set(selectedTables);
-    if (newSelection.has(tableId)) {
+    // Prevent deselecting the base table if provided
+    if (baseTableId && tableId === baseTableId) return;
+
+    const alreadySelected = selectedTables.has(tableId);
+    // If it's already selected, allow deselect without prompts
+    if (alreadySelected) {
+      const newSelection = new Set(selectedTables);
       newSelection.delete(tableId);
-    } else {
-      newSelection.add(tableId);
+      setSelectedTables(newSelection);
+      return;
     }
+
+    // If selecting a new table that is occupied (has ongoing order), warn first
+    if (isTableOccupied(tableId)) {
+      Alert.alert(
+        'Table Occupied',
+        `${tables[tableId]?.name || 'This table'} has an active order. Merging will consolidate orders into the merged table. Continue?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Continue',
+            style: 'default',
+            onPress: () => {
+              const newSelection = new Set(selectedTables);
+              newSelection.add(tableId);
+              setSelectedTables(newSelection);
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    const newSelection = new Set(selectedTables);
+    newSelection.add(tableId);
     setSelectedTables(newSelection);
   };
 
@@ -50,32 +87,68 @@ const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) =
       return;
     }
 
+    if (!mergedName.trim()) {
+      Alert.alert('Error', 'Please provide a name for the merged table');
+      return;
+    }
+
     const selectedTableIds = Array.from(selectedTables);
     const selectedTableNames = selectedTableIds.map(id => tables[id]?.name || id);
     
     // Check if any selected tables have active orders
-    const hasActiveOrders = selectedTableIds.some(tableId => {
-      // This would need to be implemented based on your orders state
-      // For now, we'll assume no active orders
-      return false;
+    const tablesWithOrders = selectedTableIds.filter(tableId => {
+      return ongoingOrderIds.some((orderId: string) => {
+        const order = ongoingOrders[orderId];
+        return order && order.tableId === tableId && order.status === 'ongoing';
+      });
     });
 
-    if (hasActiveOrders) {
-      Alert.alert('Error', 'Cannot merge tables with active orders. Please complete or cancel existing orders first.');
-      return;
+    if (tablesWithOrders.length > 0) {
+      // Show confirmation for merging tables with orders
+      Alert.alert(
+        'Tables with Active Orders',
+        `The following tables have active orders: ${tablesWithOrders.map(id => tables[id]?.name).join(', ')}. Merging will consolidate all orders into a single merged table order. Continue?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Merge Tables & Orders', 
+            style: 'default',
+            onPress: () => performTableMerge(selectedTableIds, selectedTableNames)
+          },
+        ]
+      );
+    } else {
+      // No active orders, proceed with merge
+      performTableMerge(selectedTableIds, selectedTableNames);
     }
+  };
 
-    const name = mergedName.trim() || `Merged (${selectedTableNames.join(' + ')})`;
-    
+  const performTableMerge = (tableIds: string[], tableNames: string[]) => {
+    const name = mergedName.trim();
+    // Generate a deterministic merged table id to use across both reducers
+    const newMergedTableId = `merged-${Date.now()}`;
+
+    // First create the merged table with the known id
     dispatch(mergeTables({
-      tableIds: selectedTableIds,
+      tableIds: tableIds,
       mergedName: name,
+      mergedTableId: newMergedTableId,
     }));
 
-    Alert.alert('Success', `Tables merged successfully into "${name}"`);
-    setSelectedTables(new Set());
-    setMergedName('');
-    onClose();
+    // Immediately merge any existing orders into the new merged table id
+    dispatch(mergeOrders({
+      tableIds: tableIds,
+      mergedTableId: newMergedTableId,
+      mergedTableName: name,
+    }));
+
+    // Small delay to allow state to update, then redirect to ongoing orders
+    setTimeout(() => {
+      setSelectedTables(new Set());
+      setMergedName('');
+      onClose();
+      (navigation as any).navigate('Orders', { screen: 'OngoingOrders' });
+    }, 100);
   };
 
   const getTotalSeats = () => {
@@ -83,6 +156,12 @@ const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) =
       const table = tables[tableId];
       return total + (table?.seats || 0);
     }, 0);
+  };
+
+  const isFormValid = () => {
+    // If launched from a base table, require at least 1 additional table
+    const requiredCount = baseTableId ? 2 : 2;
+    return selectedTables.size >= requiredCount && mergedName.trim().length >= 2;
   };
 
   const resetForm = () => {
@@ -93,8 +172,13 @@ const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) =
   useEffect(() => {
     if (!visible) {
       resetForm();
+      return;
     }
-  }, [visible]);
+    // When opening with a base table (from ongoing order), preselect it
+    if (visible && baseTableId) {
+      setSelectedTables(new Set([baseTableId]));
+    }
+  }, [visible, baseTableId]);
 
   return (
     <Modal
@@ -121,8 +205,28 @@ const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) =
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Available Tables</Text>
               <Text style={styles.sectionSubtitle}>
-                Select tables to merge (minimum 2)
+                {baseTableId ? 'Select other tables to merge with the base table' : 'Select tables to merge (minimum 2)'}
               </Text>
+              {selectedTables.size > 0 && (
+                <View style={styles.warningBox}>
+                  <Ionicons name="warning" size={16} color={colors.warning} />
+                  <Text style={styles.warningText}>
+                    {(() => {
+                      const tablesWithOrders = Array.from(selectedTables).filter(tableId => {
+                        return ongoingOrderIds.some((orderId: string) => {
+                          const order = ongoingOrders[orderId];
+                          return order && order.tableId === tableId && order.status === 'ongoing';
+                        });
+                      });
+                      
+                      if (tablesWithOrders.length > 0) {
+                        return `Warning: ${tablesWithOrders.length} selected table(s) have active orders. Merging will consolidate all orders into a single merged table order.`;
+                      }
+                      return '';
+                    })()}
+                  </Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.tablesGrid}>
@@ -131,9 +235,13 @@ const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) =
                   key={table.id}
                   style={[
                     styles.tableCard,
+                    isTableOccupied(table.id) && styles.tableCardOccupied,
+                    !isTableOccupied(table.id) && styles.tableCardEmpty,
+                    baseTableId === table.id && styles.tableCardBase,
                     selectedTables.has(table.id) && styles.tableCardSelected
                   ]}
                   onPress={() => toggleTableSelection(table.id)}
+                  disabled={baseTableId === table.id}
                 >
                   <View style={styles.tableCardHeader}>
                     <Text style={[
@@ -155,6 +263,9 @@ const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) =
                     selectedTables.has(table.id) && styles.tableSeatsSelected
                   ]}>
                     {table.seats} seats
+                  </Text>
+                  <Text style={styles.occupancyText}>
+                    {isTableOccupied(table.id) ? 'Occupied' : 'Empty'}
                   </Text>
                   {table.description && (
                     <Text style={[
@@ -185,17 +296,39 @@ const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) =
             )}
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Merged Table Name (Optional)</Text>
+              <View style={styles.inputLabelRow}>
+                <Text style={styles.inputLabel}>
+                  Merged Table Name <Text style={styles.requiredIndicator}>*</Text>
+                </Text>
+                {mergedName.trim().length >= 2 && (
+                  <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+                )}
+              </View>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  !mergedName.trim() && styles.inputRequired,
+                  mergedName.trim().length >= 2 && styles.inputValid
+                ]}
                 value={mergedName}
                 onChangeText={setMergedName}
                 placeholder="e.g., Party Table, Large Group"
                 placeholderTextColor={colors.textSecondary}
               />
               <Text style={styles.inputHint}>
-                Leave empty to use auto-generated name
+                This name will be used for the merged table.
               </Text>
+              <Text style={[
+                styles.characterCounter,
+                mergedName.length >= 2 && styles.characterCounterValid
+              ]}>
+                {mergedName.length}/2 characters minimum
+              </Text>
+              {mergedName.length > 0 && mergedName.length < 2 && (
+                <Text style={styles.validationError}>
+                  Table name must be at least 2 characters long
+                </Text>
+              )}
             </View>
 
             <View style={styles.modalActions}>
@@ -209,10 +342,10 @@ const MergeTableModal: React.FC<MergeTableModalProps> = ({ visible, onClose }) =
               <TouchableOpacity
                 style={[
                   styles.modalButtonConfirm,
-                  selectedTables.size < 2 && styles.modalButtonDisabled
+                  !isFormValid() && styles.modalButtonDisabled
                 ]}
                 onPress={handleMergeTables}
-                disabled={selectedTables.size < 2}
+                disabled={!isFormValid()}
               >
                 <Text style={styles.modalButtonConfirmText}>Merge Tables</Text>
               </TouchableOpacity>
@@ -236,7 +369,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     width: '90%',
     maxHeight: '80%',
-    ...shadow.lg,
+    ...shadow.card,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -288,8 +421,20 @@ const styles = StyleSheet.create({
     borderColor: colors.outline,
   },
   tableCardSelected: {
-    borderColor: colors.primary,
+    borderColor: colors.info,
     backgroundColor: colors.primary + '10',
+  },
+  tableCardEmpty: {
+    borderColor: colors.success,
+    backgroundColor: colors.success + '10',
+  },
+  tableCardOccupied: {
+    borderColor: colors.warning,
+    backgroundColor: colors.warning + '10',
+  },
+  tableCardBase: {
+    borderColor: colors.info,
+    backgroundColor: colors.info + '10',
   },
   tableCardHeader: {
     flexDirection: 'row',
@@ -312,6 +457,11 @@ const styles = StyleSheet.create({
   },
   tableSeatsSelected: {
     color: colors.primary,
+  },
+  occupancyText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
   },
   tableDescription: {
     fontSize: 12,
@@ -353,11 +503,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.lg,
   },
+  inputLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
   inputLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: colors.textPrimary,
-    marginBottom: spacing.xs,
   },
   input: {
     borderWidth: 1,
@@ -372,6 +527,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
     marginTop: spacing.xs,
+  },
+  characterCounter: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+    textAlign: 'right',
+  },
+  characterCounterValid: {
+    color: colors.success,
   },
   modalActions: {
     flexDirection: 'row',
@@ -410,6 +574,39 @@ const styles = StyleSheet.create({
   modalButtonDisabled: {
     backgroundColor: colors.textMuted,
   },
+  warningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.warning + '10',
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+    marginHorizontal: spacing.lg,
+  },
+  warningText: {
+    fontSize: 12,
+    color: colors.warning,
+    marginLeft: spacing.xs,
+    flexShrink: 1,
+  },
+  requiredIndicator: {
+    color: colors.danger,
+    fontSize: 16,
+    marginLeft: spacing.xs,
+  },
+  inputRequired: {
+    borderColor: colors.danger,
+  },
+  inputValid: {
+    borderColor: colors.success,
+  },
+  validationError: {
+    fontSize: 12,
+    color: colors.danger,
+    marginTop: spacing.xs,
+  },
 });
 
 export default MergeTableModal;
+
+

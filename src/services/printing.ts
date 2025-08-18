@@ -845,6 +845,76 @@ export class PrintService {
     }
   }
 
+  static async printPreReceiptFromOrder(order: any, table: any): Promise<{ success: boolean; message: string; fallback?: string }> {
+    try {
+      const { blePrinter } = await import('./blePrinter');
+      const { bluetoothManager } = await import('./bluetoothManager');
+      
+      const connectionStatus = await this.checkPrinterConnection();
+      if (!connectionStatus.connected) {
+        return {
+          success: false,
+          message: connectionStatus.message,
+          fallback: 'Would you like to save or share a pre-receipt file instead?'
+        };
+      }
+
+      const connectionTest = await bluetoothManager.testConnection();
+      if (!connectionTest) {
+        return {
+          success: false,
+          message: 'Printer connection test failed. Please check your printer connection.',
+          fallback: 'Would you like to save or share a pre-receipt file instead?'
+        };
+      }
+
+      const subtotal = order.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
+
+      await blePrinter.printReceipt({
+        restaurantName: 'ARBI POS',
+        receiptId: `PR${Date.now()}`,
+        date: new Date(order.createdAt).toLocaleDateString(),
+        time: new Date(order.createdAt).toLocaleTimeString(),
+        table: table?.name || order.tableId,
+        items: order.items.map((item: any) => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price
+        })),
+        taxLabel: `Tax (0%)`,
+        serviceLabel: `Service (0%)`,
+        subtotal,
+        tax: 0,
+        service: 0,
+        discount: 0,
+        total: subtotal,
+        payment: null,
+        isPreReceipt: true,
+      });
+
+      return {
+        success: true,
+        message: 'Pre-receipt sent to printer successfully'
+      };
+    } catch (error: any) {
+      console.error('Pre-receipt print failed:', error);
+      let errorMessage = error.message;
+      if (error.message.includes('connection')) {
+        errorMessage = 'Printer connection lost. Please reconnect your printer.';
+      } else if (error.message.includes('permission')) {
+        errorMessage = 'Bluetooth permissions required. Please grant permissions in settings.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Printer connection timeout. Check if printer is turned on and in range.';
+      }
+
+      return {
+        success: false,
+        message: `Failed to print pre-receipt: ${errorMessage}`,
+        fallback: 'Would you like to save or share a pre-receipt file instead?'
+      };
+    }
+  }
+
   static async printCombinedTicketsFromOrder(order: any, table: any): Promise<{ success: boolean; message: string; fallback?: string }> {
     try {
       console.log('🖨️ PrintService: Processing order for combined tickets:', {
@@ -927,32 +997,27 @@ export class PrintService {
   // Fallback method to save tickets as files
   static async saveTicketAsFile(ticketData: any, type: 'KOT' | 'BOT' | 'COMBINED'): Promise<{ success: boolean; message: string; fileUri?: string }> {
     try {
-      let html = '';
-      
-      if (type === 'KOT') {
-        html = this.generateKOTHTML(ticketData);
-      } else if (type === 'BOT') {
-        html = this.generateBOTHTML(ticketData);
-      } else {
-        html = this.generateCombinedTicketsHTML(ticketData);
-      }
-
-      const { uri } = await Print.printToFileAsync({ 
-        html,
-        base64: false
-      });
-
-      return {
-        success: true,
-        message: `${type} ticket saved as file successfully`,
-        fileUri: uri
-      };
+      // Build plain-text content matching thermal print format
+      const content = this.buildTicketPlainText(ticketData, type);
+      const html = this.wrapPlainTextHtml(content, type === 'COMBINED' ? 'Combined Tickets' : `${type} Ticket`);
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      return { success: true, message: `${type} ticket saved as file successfully`, fileUri: uri };
     } catch (error: any) {
       console.error('Save ticket as file failed:', error);
-      return {
-        success: false,
-        message: `Failed to save ticket as file: ${error.message}`
-      };
+      return { success: false, message: `Failed to save ticket as file: ${error.message}` };
+    }
+  }
+
+  static async saveReceiptAsFile(receipt: ReceiptData): Promise<{ success: boolean; message: string; fileUri?: string }> {
+    try {
+      // Build plain-text receipt resembling thermal print
+      const content = this.buildReceiptPlainText(receipt);
+      const html = this.wrapPlainTextHtml(content, 'Receipt');
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      return { success: true, message: 'Receipt saved as file successfully', fileUri: uri };
+    } catch (error: any) {
+      console.error('Save receipt as file failed:', error);
+      return { success: false, message: `Failed to save receipt as file: ${error.message}` };
     }
   }
 
@@ -1098,5 +1163,84 @@ export class PrintService {
     `;
 
     return html;
+  }
+
+  // Helpers to unify formatting between physical print and saved PDF (use plain-text layout)
+  private static wrapPlainTextHtml(content: string, title: string): string {
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            body { font-family: monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; margin: 16px; }
+            .title { text-align: center; font-weight: bold; margin-bottom: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="title">${title}</div>
+          ${content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+        </body>
+      </html>
+    `;
+  }
+
+  private static padEnd(value: any, length: number): string { return String(value ?? '').padEnd(length); }
+  private static padStart(value: any, length: number): string { return String(value ?? '').padStart(length); }
+
+  private static buildTicketPlainText(data: any, type: 'KOT' | 'BOT' | 'COMBINED'): string {
+    const buildSection = (label: 'KOT' | 'BOT') => {
+      const items = (data.items || []).filter((i: any) => i.orderType === label);
+      if (items.length === 0) return '';
+      let text = '';
+      text += `${label}\n`;
+      text += `${data.ticketId}\n`;
+      text += `${data.date} ${data.time}\n`;
+      text += `Table ${data.table}\n`;
+      text += 'Steward: Maam\n';
+      text += '------------------------------\n';
+      text += 'Item                    Qty\n';
+      text += '------------------------------\n';
+      for (const item of items) {
+        const name = this.padEnd(item.name, 20);
+        const qty = this.padStart(item.quantity, 3);
+        text += `${name}${qty}\n`;
+      }
+      text += '------------------------------\n';
+      return text;
+    };
+
+    if (type === 'KOT') return buildSection('KOT');
+    if (type === 'BOT') return buildSection('BOT');
+    // COMBINED
+    return [buildSection('KOT'), buildSection('BOT')].filter(Boolean).join('\n');
+  }
+
+  private static buildReceiptPlainText(receipt: ReceiptData): string {
+    const lines: string[] = [];
+    lines.push('HOUSE OF HOSPITALITY');
+    lines.push('House of hospitality Pvt. Ltd');
+    lines.push('Budhanilkantha, Kathmandu');
+    lines.push('PAN: 609661879');
+    lines.push(`${receipt.date} ${receipt.time}`);
+    lines.push(`Table ${receipt.tableNumber}`);
+    lines.push('Cashier: ' + (receipt.cashier || 'POS'));
+    lines.push('Steward: Maam');
+    lines.push('------------------------------');
+    lines.push('Item                    Qty    Total');
+    lines.push('------------------------------');
+    for (const it of receipt.items || []) {
+      const name = this.padEnd(it.name, 20);
+      const qty = this.padStart(it.quantity, 3);
+      const total = (it.total).toFixed(1);
+      lines.push(`${name}${qty}   ${total}`);
+    }
+    lines.push('------------------------------');
+    lines.push(`Subtotal: ${receipt.subtotal.toFixed(1)}`);
+    lines.push(`Tax: ${receipt.tax.toFixed(1)}`);
+    lines.push(`Service: ${receipt.serviceCharge.toFixed(1)}`);
+    lines.push(`Discount: ${receipt.discount.toFixed(1)}`);
+    lines.push(`TOTAL: ${receipt.total.toFixed(1)}`);
+    lines.push(`Payment Method: ${receipt.paymentMethod}`);
+    return lines.join('\n');
   }
 }

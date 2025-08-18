@@ -18,7 +18,7 @@ import { useNavigation, useNavigationContainerRef } from '@react-navigation/nati
 import { colors, spacing, radius } from '../../theme';
 import { RootState } from '../../redux/store';
 import { MenuItem } from '../../redux/slices/menuSlice';
-import { addItem, createOrder } from '../../redux/slices/ordersSlice';
+import { addItem, createOrder, markOrderSaved, snapshotSavedQuantities } from '../../redux/slices/ordersSlice';
 import { CommonActions } from '@react-navigation/native';
 import Toast from '../../components/Toast';
 import { PrintService } from '../../services/printing';
@@ -343,12 +343,45 @@ const MenuScreen: React.FC = () => {
         return;
       }
       
+      // Compute delta items so we only print newly added quantities
+      const savedQuantitiesLocal: Record<string, number> = (order as any)?.savedQuantities || {};
+      const itemsWithTypes = (order.items || []).map((i: any) => ({
+        ...i,
+        orderType: i.orderType || (menuItemsById as any)[i.menuItemId]?.orderType || 'KOT',
+      }));
+      const deltaItems = itemsWithTypes
+        .map((i: any) => ({ ...i, delta: i.quantity - (savedQuantitiesLocal[i.menuItemId] || 0) }))
+        .filter((i: any) => i.delta > 0)
+        .map((i: any) => ({ ...i, quantity: i.delta }));
+
+      if (deltaItems.length === 0) {
+        // Nothing new to print; mark as saved and snapshot quantities so payment can proceed
+        (dispatch as any)(markOrderSaved({ orderId: pendingOrderInfo.orderId }));
+        (dispatch as any)(snapshotSavedQuantities({ orderId: pendingOrderInfo.orderId }));
+
+        const tableName = table?.name || `Table ${pendingOrderInfo.tableId.slice(-6)}`;
+        const message = pendingOrderInfo.isMulti 
+          ? `No new items to print for ${tableName}. Order saved.`
+          : `No new items to print. Order saved for ${tableName}.`;
+        showToast(message, 'success', { 
+          orderId: pendingOrderInfo.orderId, 
+          tableId: pendingOrderInfo.tableId 
+        });
+        return;
+      }
+
+      const orderDelta = { ...order, items: deltaItems } as any;
+
       // Show printing status
       showToast('Printing tickets...', 'info');
       
-      // Print KOT/BOT tickets
-      const result = await PrintService.printCombinedTicketsFromOrder(order, table);
-      
+      // Print KOT/BOT tickets only for deltas
+      const result = await PrintService.printCombinedTicketsFromOrder(orderDelta, table);
+
+      // Auto-save regardless of print success so payment can proceed
+      (dispatch as any)(markOrderSaved({ orderId: pendingOrderInfo.orderId }));
+      (dispatch as any)(snapshotSavedQuantities({ orderId: pendingOrderInfo.orderId }));
+
       if (result.success) {
         const tableName = table?.name || `Table ${pendingOrderInfo.tableId.slice(-6)}`;
         const message = pendingOrderInfo.isMulti 
@@ -360,11 +393,33 @@ const MenuScreen: React.FC = () => {
           tableId: pendingOrderInfo.tableId 
         });
       } else {
-        showToast(`Tickets printed but with issues: ${result.message}`, 'warning');
+        const tableName = table?.name || `Table ${pendingOrderInfo.tableId.slice(-6)}`;
+        const message = pendingOrderInfo.isMulti 
+          ? `Placed ${pendingOrderInfo.itemCount} items in ${tableName}. Saved without printing.`
+          : `${pendingOrderInfo.itemName} added to ${tableName}. Saved without printing.`;
+        showToast(message, 'warning', {
+          orderId: pendingOrderInfo.orderId,
+          tableId: pendingOrderInfo.tableId,
+        });
       }
     } catch (error: any) {
       console.error('Print error:', error);
-      showToast(`Failed to print tickets: ${error.message}`, 'error');
+      // Even on error, save snapshot so payment can proceed
+      if (pendingOrderInfo) {
+        (dispatch as any)(markOrderSaved({ orderId: pendingOrderInfo.orderId }));
+        (dispatch as any)(snapshotSavedQuantities({ orderId: pendingOrderInfo.orderId }));
+        const table = tablesById[pendingOrderInfo.tableId];
+        const tableName = table?.name || `Table ${pendingOrderInfo.tableId.slice(-6)}`;
+        const message = pendingOrderInfo.isMulti 
+          ? `Placed ${pendingOrderInfo.itemCount} items in ${tableName}. Saved; print failed.`
+          : `${pendingOrderInfo.itemName} added to ${tableName}. Saved; print failed.`;
+        showToast(message, 'warning', {
+          orderId: pendingOrderInfo.orderId,
+          tableId: pendingOrderInfo.tableId,
+        });
+      } else {
+        showToast(`Failed to print tickets: ${error.message}`, 'error');
+      }
     } finally {
       setPendingOrderInfo(null);
     }

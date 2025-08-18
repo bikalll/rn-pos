@@ -11,6 +11,12 @@ export type Table = {
   mergedTables?: string[]; // Array of table IDs that are merged
   mergedTableNames?: string[]; // Array of table names for display
   totalSeats?: number; // Total seats when merged
+  // Reservation
+  isReserved?: boolean;
+  reservedAt?: number;
+  reservedUntil?: number;
+  reservedBy?: string;
+  reservedNote?: string;
 };
 
 export type TablesState = {
@@ -116,17 +122,35 @@ const tablesSlice = createSlice({
       );
       state.nextTableId = highestNumber + 1;
     },
-    mergeTables: (state, action: PayloadAction<{ tableIds: string[]; mergedName?: string }>) => {
-      const { tableIds, mergedName } = action.payload;
+    reserveTable: (state, action: PayloadAction<{ id: string; reservedBy?: string; reservedUntil?: number; reservedNote?: string }>) => {
+      const t = state.tablesById[action.payload.id];
+      if (!t) return;
+      t.isReserved = true;
+      t.reservedAt = Date.now();
+      t.reservedBy = action.payload.reservedBy;
+      t.reservedUntil = action.payload.reservedUntil;
+      t.reservedNote = action.payload.reservedNote;
+    },
+    unreserveTable: (state, action: PayloadAction<{ id: string }>) => {
+      const t = state.tablesById[action.payload.id];
+      if (!t) return;
+      t.isReserved = false;
+      t.reservedAt = undefined;
+      t.reservedBy = undefined;
+      t.reservedUntil = undefined;
+      t.reservedNote = undefined;
+    },
+    mergeTables: (state, action: PayloadAction<{ tableIds: string[]; mergedName?: string; mergedTableId?: string }>) => {
+      const { tableIds, mergedName, mergedTableId } = action.payload;
       if (tableIds.length < 2) return;
       
       // Create merged table
-      const mergedTableId = `merged-${Date.now()}`;
+      const newMergedTableId = mergedTableId || `merged-${Date.now()}`;
       const mergedTableNames = tableIds.map(id => state.tablesById[id]?.name || id);
       const totalSeats = tableIds.reduce((sum, id) => sum + (state.tablesById[id]?.seats || 0), 0);
       
       const mergedTable: Table = {
-        id: mergedTableId,
+        id: newMergedTableId,
         name: mergedName || `Merged (${mergedTableNames.join(' + ')})`,
         seats: totalSeats,
         description: `Merged tables: ${mergedTableNames.join(', ')}`,
@@ -179,7 +203,38 @@ export const {
   clearDuplicates,
   mergeTables,
   unmergeTables,
+  reserveTable,
+  unreserveTable,
 } = tablesSlice.actions;
+
+// Selectors
+export const selectActiveTables = (state: { tables: TablesState }) => {
+  const { tablesById, tableIds } = state.tables;
+  return tableIds
+    .map(id => tablesById[id])
+    .filter(table => table && table.isActive);
+};
+
+export const selectVisibleTables = (state: { tables: TablesState }) => {
+  const { tablesById, tableIds } = state.tables;
+  return tableIds
+    .map(id => tablesById[id])
+    .filter(table => table && table.isActive && !table.isMerged && !table.isReserved);
+};
+
+export const selectMergedTables = (state: { tables: TablesState }) => {
+  const { tablesById, tableIds } = state.tables;
+  return tableIds
+    .map(id => tablesById[id])
+    .filter(table => table && table.isMerged);
+};
+
+export const selectAllTablesForManagement = (state: { tables: TablesState }) => {
+  const { tablesById, tableIds } = state.tables;
+  return tableIds
+    .map(id => tablesById[id])
+    .filter(table => table); // Show all tables including inactive ones for management
+};
 
 export default tablesSlice.reducer;
 

@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { bluetoothDebugger, DebugInfo } from '../../services/bluetoothDebugger';
 import { bluetoothManager } from '../../services/bluetoothManager';
 import { blePrinter } from '../../services/blePrinter';
@@ -211,13 +212,14 @@ const BluetoothDebugScreen: React.FC = () => {
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Bluetooth Debug</Text>
-        <TouchableOpacity style={styles.refreshButton} onPress={runDiagnostics}>
-          <Text style={styles.buttonText}>🔄 Refresh</Text>
-        </TouchableOpacity>
-      </View>
+    <SafeAreaView style={styles.container}>
+      <ScrollView style={styles.scrollView}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Bluetooth Debug</Text>
+          <TouchableOpacity style={styles.refreshButton} onPress={runDiagnostics}>
+            <Text style={styles.buttonText}>🔄 Refresh</Text>
+          </TouchableOpacity>
+        </View>
 
       {loading && (
         <View style={styles.loadingContainer}>
@@ -353,7 +355,8 @@ const BluetoothDebugScreen: React.FC = () => {
           )}
         </View>
       )}
-    </ScrollView>
+        </ScrollView>
+      </SafeAreaView>
   );
 };
 
@@ -361,6 +364,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  scrollView: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',

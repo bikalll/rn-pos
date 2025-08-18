@@ -9,6 +9,7 @@ import {
   Modal,
   FlatList,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { MenuItemForm, MenuItemImage } from '../../components';
@@ -204,7 +205,7 @@ const EnhancedMenuManagementScreen: React.FC = () => {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Menu Management</Text>
         <TouchableOpacity
@@ -255,7 +256,7 @@ const EnhancedMenuManagementScreen: React.FC = () => {
           categories={categories}
         />
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 };
 

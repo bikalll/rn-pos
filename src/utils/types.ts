@@ -30,8 +30,14 @@ items: OrderItem[];
 discountPercentage: number;
 serviceChargePercentage: number;
 taxPercentage: number;
+ customerName?: string;
+ customerPhone?: string;
 payment?: PaymentInfo;
 createdAt: number;
+ // Tracks last saved/printed quantities per item so KOT/BOT only prints deltas
+ savedQuantities?: Record<string, number>;
+  // Whether the order has been saved at least once (UI hint)
+  isSaved?: boolean;
 };
 
 export type InventoryItem = {

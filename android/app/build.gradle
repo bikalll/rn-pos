@@ -121,25 +121,10 @@ android {
         jniLibs {
             useLegacyPackaging (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
         }
-        pickFirsts += [
-            '**/libc++_shared.so',
-            '**/libjsc.so',
-            '**/libfolly_runtime.so',
-            '**/libreactnativejni.so',
-            '**/libturbomodulejsijni.so',
-            '**/libreact_nativemodule_core.so'
-        ]
-        excludes += [
-            'META-INF/DEPENDENCIES',
-            'META-INF/LICENSE',
-            'META-INF/LICENSE.txt',
-            'META-INF/license.txt',
-            'META-INF/NOTICE',
-            'META-INF/NOTICE.txt',
-            'META-INF/notice.txt',
-            'META-INF/ASL2.0',
-            'META-INF/*.kotlin_module'
-        ]
+    }
+    // Exclude old support libraries to fix duplicate classes with AndroidX
+    configurations.all {
+        exclude group: 'com.android.support'
     }
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -193,23 +178,7 @@ dependencies {
     } else {
         implementation jscFlavor
     }
-    
-    // Force specific versions to avoid conflicts
-    implementation 'androidx.core:core-ktx:1.12.0'
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'androidx.activity:activity:1.8.2'
-    implementation 'androidx.activity:activity-ktx:1.8.2'
-}
 
-configurations.all {
-    resolutionStrategy {
-        force 'androidx.core:core:1.12.0'
-        force 'androidx.core:core-ktx:1.12.0'
-        force 'androidx.media:media:1.7.0'
-        force 'androidx.appcompat:appcompat:1.6.1'
-        force 'androidx.activity:activity:1.8.2'
-        force 'androidx.activity:activity-ktx:1.8.2'
-        exclude group: 'com.android.support', module: 'support-compat'
-        exclude group: 'com.android.support', module: 'support-media-compat'
-    }
+    // Force AndroidX media to avoid old support libs pulled by transitive deps
+    implementation("androidx.media:media:1.6.0")
 }

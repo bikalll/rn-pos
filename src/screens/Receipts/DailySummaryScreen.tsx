@@ -271,6 +271,71 @@ export default function ReceiptsScreen() {
     </TouchableOpacity>
   );
 
+  const handlePrintDailySummary = async () => {
+    try {
+      const dateFilteredReceipts = filterReceiptsByDate(receipts, selectedSortOption);
+      const grossSales = dateFilteredReceipts.reduce((sum, r) => sum + (r.subtotal + r.tax + r.serviceCharge), 0);
+      const discounts = dateFilteredReceipts.reduce((sum, r) => sum + (r.discount || 0), 0);
+      const serviceCharge = dateFilteredReceipts.reduce((sum, r) => sum + (r.serviceCharge || 0), 0);
+      const complementary = 0;
+      const netSales = dateFilteredReceipts.reduce((sum, r) => sum + parseFloat(r.amount.replace('Rs ', '')), 0);
+
+      const types = ['Card', 'Cash', 'Credit'];
+      const salesByType = types.map(type => ({
+        type,
+        count: dateFilteredReceipts.filter(r => r.paymentMethod === type).length,
+        amount: dateFilteredReceipts
+          .filter(r => r.paymentMethod === type)
+          .reduce((s, r) => s + parseFloat(r.amount.replace('Rs ', '')), 0),
+      }));
+      const totalCount = salesByType.reduce((s, t) => s + t.count, 0);
+      const totalAmount = salesByType.reduce((s, t) => s + t.amount, 0);
+      salesByType.push({ type: 'Total', count: totalCount, amount: totalAmount });
+
+      const paymentsNet = ['Credit', 'Cash', 'Card'].map(type => ({
+        type,
+        amount: dateFilteredReceipts
+          .filter(r => r.paymentMethod === type)
+          .reduce((s, r) => s + parseFloat(r.amount.replace('Rs ', '')), 0),
+      }));
+
+      const first = dateFilteredReceipts[dateFilteredReceipts.length - 1];
+      const last = dateFilteredReceipts[0];
+
+      const now = new Date();
+      const data = {
+        printTime: now.toLocaleString(),
+        date: getDateRangeLabel(selectedSortOption),
+        grossSales,
+        serviceCharge,
+        discounts,
+        complementary,
+        netSales,
+        salesByType,
+        paymentsNet,
+        audit: { preReceiptCount: 0, receiptReprintCount: 0, voidReceiptCount: 0, totalVoidItemCount: 0 },
+        firstReceipt: first ? {
+          reference: first.id,
+          sequence: first.orderId?.slice(-5),
+          time: new Date(first.timestamp).toLocaleTimeString(),
+          netAmount: parseFloat(first.amount.replace('Rs ', '')),
+        } : undefined,
+        lastReceipt: last ? {
+          reference: last.id,
+          sequence: last.orderId?.slice(-5),
+          time: new Date(last.timestamp).toLocaleTimeString(),
+          netAmount: parseFloat(last.amount.replace('Rs ', '')),
+        } : undefined,
+      };
+
+      const { blePrinter } = await import('../../services/blePrinter');
+      await blePrinter.printDailySummary(data as any);
+      Alert.alert('Success', 'Daily summary sent to printer');
+    } catch (e: any) {
+      Alert.alert('Print Failed', e.message || String(e));
+    }
+  };
+
   const handleViewOrders = () => {
     // Navigate to Orders drawer screen -> OngoingOrders stack screen
     navigation.navigate('Orders', { screen: 'OngoingOrders' });
@@ -293,40 +358,21 @@ export default function ReceiptsScreen() {
     }
   };
 
-  const handlePrintReceipt = (receipt: ReceiptData) => {
-    // Convert ReceiptData to the format expected by printing service
-    const order = ordersById[receipt.orderId];
-    if (order) {
-      const printReceiptData = {
-        receiptId: receipt.id,
-        date: new Date(order.createdAt).toLocaleDateString(),
-        time: new Date(order.createdAt).toLocaleTimeString(),
-        tableNumber: receipt.table,
-        customerName: receipt.customer,
-        items: order.items.map((item: any) => ({
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-          total: item.price * item.quantity
-        })),
-        subtotal: receipt.subtotal,
-        tax: receipt.tax,
-        serviceCharge: receipt.serviceCharge,
-        discount: receipt.discount,
-        total: receipt.subtotal + receipt.tax + receipt.serviceCharge - receipt.discount,
-        paymentMethod: receipt.paymentMethod,
-        cashier: 'Staff'
-      };
-
-      import('../../services/printing').then(({ printReceipt }) => {
-        printReceipt(printReceiptData).then((result: string) => {
-          Alert.alert('Success', 'Receipt generated and shared successfully!');
-        }).catch((error: any) => {
-          Alert.alert('Error', `Failed to print receipt: ${error.message}`);
-        });
-      });
-    } else {
-      Alert.alert('Error', 'Order not found for printing');
+  const handlePrintReceipt = async (receipt: ReceiptData) => {
+    try {
+      const order = ordersById[receipt.orderId];
+      if (!order) {
+        Alert.alert('Error', 'Order not found for printing');
+        return;
+      }
+      const table = tables[order.tableId];
+      const { PrintService } = await import('../../services/printing');
+      const result = await PrintService.printReceiptFromOrder(order, table);
+      if (!result.success) {
+        Alert.alert('Print Failed', result.message);
+      }
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to print receipt: ${error.message || String(error)}`);
     }
   };
 
@@ -423,19 +469,29 @@ export default function ReceiptsScreen() {
       >
           {/* Header */}
           <View style={{ marginBottom: 16 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
-              <MaterialCommunityIcons name="file-document" size={24} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={{ fontSize: 22, fontWeight: "bold", color: "#fff" }}>Receipts</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <MaterialCommunityIcons name="file-document" size={22} color="#fff" style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#fff" }}>Receipts</Text>
             </View>
-            <Text style={{ color: "#aaa", fontSize: 14 }}>
+            <Text style={{ color: "#aaa", fontSize: 13 }}>
               View and manage today's transaction receipts.
             </Text>
           </View>
 
           {/* Payment Summary */}
-          <Text style={{ fontSize: 18, fontWeight: "600", color: "#fff", marginBottom: 12 }}>
-            {getDateRangeLabel(selectedSortOption)} Payment Summary
-          </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={{ fontSize: 18, fontWeight: "600", color: "#fff" }}>
+              {getDateRangeLabel(selectedSortOption)} Payment Summary
+            </Text>
+            <TouchableOpacity
+              onPress={handlePrintDailySummary}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#2a2a2a', borderWidth: 1, borderColor: '#444', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
+              accessibilityLabel="Print daily summary"
+            >
+              <MaterialCommunityIcons name="printer" size={14} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600', marginLeft: 6 }}>Print</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* Payment Method Cards Grid */}
           <View style={{ marginBottom: 20 }}>

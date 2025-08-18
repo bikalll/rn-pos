@@ -13,7 +13,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../../redux/store';
-import { addTable, updateTable, removeTable, toggleTableStatus, initializeDefaultTables, resetTables, clearDuplicates } from '../../redux/slices/tablesSlice';
+import { 
+  addTable, 
+  updateTable, 
+  removeTable, 
+  toggleTableStatus, 
+  initializeDefaultTables, 
+  resetTables, 
+  clearDuplicates,
+  selectAllTablesForManagement,
+  selectMergedTables,
+  unmergeTables
+} from '../../redux/slices/tablesSlice';
+import { unmergeOrders } from '../../redux/slices/ordersSlice';
 import { colors, spacing, radius } from '../../theme';
 
 const TableManagementScreen: React.FC = () => {
@@ -30,6 +42,8 @@ const TableManagementScreen: React.FC = () => {
   const dispatch = useDispatch();
   const tables = useSelector((state: RootState) => state.tables.tablesById);
   const tableIds = useSelector((state: RootState) => state.tables.tableIds);
+  const mergedTables = useSelector(selectMergedTables);
+  const allTablesForManagement = useSelector(selectAllTablesForManagement);
 
   useEffect(() => {
     // Initialize default tables only once if not already initialized
@@ -82,6 +96,30 @@ const TableManagementScreen: React.FC = () => {
     );
   };
 
+  const handleUnmergeTable = (tableId: string) => {
+    Alert.alert(
+      'Unmerge Tables',
+      'Are you sure you want to unmerge these tables? This will reactivate the original tables.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Unmerge', 
+          style: 'default',
+          onPress: () => {
+            const mergedTable = tables[tableId];
+            if (mergedTable?.mergedTables) {
+              dispatch(unmergeTables({ mergedTableId: tableId }));
+              dispatch(unmergeOrders({ 
+                mergedTableId: tableId, 
+                originalTableIds: mergedTable.mergedTables 
+              }));
+            }
+          }
+        },
+      ]
+    );
+  };
+
   const openEditModal = (table: any) => {
     console.log('Opening edit modal for table:', table);
     setEditingTable(table);
@@ -95,43 +133,118 @@ const TableManagementScreen: React.FC = () => {
     const table = tables[tableId];
     if (!table) return null;
 
+    const isMergedTable = table.isMerged;
+    const isOriginalMergedTable = !table.isActive && table.mergedTables && table.mergedTables.length > 0;
+
     return (
-      <View key={table.id} style={styles.tableCard}>
+      <View key={table.id} style={[
+        styles.tableCard,
+        isOriginalMergedTable && styles.mergedTableCard
+      ]}>
         <View style={styles.tableInfo}>
-          <Text style={styles.tableName}>{table.name}</Text>
+          <Text style={styles.tableName}>
+            {table.name}
+            {isMergedTable && (
+              <Text style={styles.mergedBadge}> (Merged)</Text>
+            )}
+            {isOriginalMergedTable && (
+              <Text style={styles.mergedBadge}> (Part of Merged)</Text>
+            )}
+          </Text>
           <Text style={styles.tableSeats}>{(table.seats || 4)} seats</Text>
           {table.description && (
             <Text style={styles.tableDescription}>{table.description}</Text>
           )}
-          <View style={[styles.statusIndicator, { backgroundColor: table.isActive ? colors.success : colors.danger }]}>
-            <Text style={styles.statusText}>{table.isActive ? 'Active' : 'Inactive'}</Text>
+          
+          {/* Show merged table information */}
+          {isMergedTable && table.mergedTableNames && (
+            <View style={styles.mergedInfo}>
+              <Text style={styles.mergedLabel}>Merged Tables:</Text>
+              <Text style={styles.mergedTables}>
+                {table.mergedTableNames.join(' + ')}
+              </Text>
+              <Text style={styles.totalSeats}>
+                Total Seats: {table.totalSeats || table.seats}
+              </Text>
+            </View>
+          )}
+          
+          {/* Show if this table is part of a merged table */}
+          {isOriginalMergedTable && (
+            <View style={styles.mergedInfo}>
+              <Text style={styles.mergedLabel}>Part of Merged Table</Text>
+              <Text style={styles.mergedTables}>
+                This table is currently merged and inactive
+              </Text>
+            </View>
+          )}
+          
+          <View style={[styles.statusIndicator, { 
+            backgroundColor: table.isActive ? colors.success : colors.danger 
+          }]}>
+            <Text style={styles.statusText}>
+              {table.isActive ? 'Active' : 'Inactive'}
+            </Text>
           </View>
         </View>
         
         <View style={styles.tableActions}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.editButton]}
-            onPress={() => openEditModal(table)}
-          >
-            <Ionicons name="pencil" size={16} color={colors.textPrimary} />
-          </TouchableOpacity>
+          {/* Show unmerge button for merged tables */}
+          {isMergedTable && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.unmergeButton]}
+              onPress={() => handleUnmergeTable(table.id)}
+            >
+              <Ionicons name="git-branch-outline" size={16} color={colors.warning} />
+            </TouchableOpacity>
+          )}
           
           <TouchableOpacity
-            style={[styles.actionButton, styles.toggleButton]}
-            onPress={() => dispatch(toggleTableStatus({ id: table.id }))}
+            style={[
+              styles.actionButton, 
+              styles.editButton,
+              (isMergedTable || isOriginalMergedTable) && styles.actionButtonDisabled
+            ]}
+            onPress={() => openEditModal(table)}
+            disabled={isMergedTable || isOriginalMergedTable}
           >
             <Ionicons 
-              name={table.isActive ? "pause" : "play"} 
+              name="pencil" 
               size={16} 
-              color={colors.textPrimary} 
+              color={(isMergedTable || isOriginalMergedTable) ? colors.textSecondary : colors.textPrimary} 
             />
           </TouchableOpacity>
           
           <TouchableOpacity
-            style={[styles.actionButton, styles.deleteButton]}
-            onPress={() => handleDeleteTable(table.id)}
+            style={[
+              styles.actionButton, 
+              styles.toggleButton,
+              (isMergedTable || isOriginalMergedTable) && styles.actionButtonDisabled
+            ]}
+            onPress={() => dispatch(toggleTableStatus({ id: table.id }))}
+            disabled={isMergedTable || isOriginalMergedTable}
           >
-            <Ionicons name="trash" size={16} color={colors.danger} />
+            <Ionicons 
+              name={table.isActive ? "pause" : "play"} 
+              size={16} 
+              color={(isMergedTable || isOriginalMergedTable) ? colors.textSecondary : colors.textPrimary} 
+            />
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[
+              styles.actionButton, 
+              styles.deleteButton,
+              (isMergedTable || isOriginalMergedTable) && styles.actionButtonDisabled
+            ]}
+            onPress={() => handleDeleteTable(table.id)}
+            disabled={isMergedTable || isOriginalMergedTable}
+          >
+            <Ionicons 
+              name="trash" 
+              size={16} 
+              color={(isMergedTable || isOriginalMergedTable) ? colors.textSecondary : colors.danger} 
+            />
           </TouchableOpacity>
         </View>
       </View>
@@ -145,7 +258,7 @@ const TableManagementScreen: React.FC = () => {
           <View>
             <Text style={styles.title}>Table Management</Text>
             <Text style={styles.subtitle}>
-              Add, edit, and manage your restaurant tables ({tableIds.length} total)
+              Add, edit, and manage your restaurant tables ({allTablesForManagement.length} total, {allTablesForManagement.filter(t => t.isActive).length} active)
             </Text>
           </View>
           <View style={styles.headerButtons}>
@@ -202,14 +315,39 @@ const TableManagementScreen: React.FC = () => {
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        {tableIds.length === 0 ? (
+        {allTablesForManagement.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>No tables configured</Text>
             <Text style={styles.emptyStateSubtext}>Add your first table to get started</Text>
           </View>
         ) : (
           <View style={styles.tablesList}>
-            {tableIds.map(renderTable)}
+            {/* Active Tables Section */}
+            {allTablesForManagement.filter(t => t.isActive && !t.isMerged).length > 0 && (
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Active Tables</Text>
+                <Text style={styles.sectionSubtitle}>Tables available for orders</Text>
+              </View>
+            )}
+            {allTablesForManagement.filter(t => t.isActive && !t.isMerged).map(table => renderTable(table.id))}
+            
+            {/* Merged Tables Section */}
+            {mergedTables.length > 0 && (
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Merged Tables</Text>
+                <Text style={styles.sectionSubtitle}>Combined tables for larger groups</Text>
+              </View>
+            )}
+            {mergedTables.map(table => renderTable(table.id))}
+            
+            {/* Inactive Tables Section */}
+            {allTablesForManagement.filter(t => !t.isActive && !t.isMerged).length > 0 && (
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Inactive Tables</Text>
+                <Text style={styles.sectionSubtitle}>Tables currently disabled</Text>
+              </View>
+            )}
+            {allTablesForManagement.filter(t => !t.isActive && !t.isMerged).map(table => renderTable(table.id))}
           </View>
         )}
       </ScrollView>
@@ -419,6 +557,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  mergedTableCard: {
+    opacity: 0.7, // Indicate merged tables are disabled
+    backgroundColor: colors.surface2, // Slightly different background for merged tables
+    borderColor: colors.outline, // Different border color for merged tables
+  },
   tableInfo: {
     flex: 1,
   },
@@ -437,6 +580,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     marginBottom: spacing.xs,
+    fontStyle: 'italic',
+  },
+  mergedInfo: {
+    backgroundColor: colors.surface2,
+    borderRadius: radius.sm,
+    padding: spacing.xs,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  mergedLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: 'bold',
+    marginBottom: spacing.xs / 2,
+  },
+  mergedTables: {
+    fontSize: 14,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs / 2,
+  },
+  totalSeats: {
+    fontSize: 12,
+    color: colors.textSecondary,
     fontStyle: 'italic',
   },
   statusIndicator: {
@@ -469,6 +635,13 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     backgroundColor: colors.surface2,
+  },
+  unmergeButton: {
+    backgroundColor: colors.warning,
+  },
+  actionButtonDisabled: {
+    opacity: 0.5, // Indicate disabled state
+    backgroundColor: colors.surface2, // Slightly different background for disabled buttons
   },
   modalOverlay: {
     flex: 1,
@@ -528,6 +701,27 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  sectionHeader: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  mergedBadge: {
+    fontSize: 12,
+    color: colors.warning,
+    fontWeight: 'bold',
+    marginLeft: spacing.xs,
   },
 });
 

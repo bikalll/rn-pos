@@ -4,16 +4,21 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
-  RefreshControl,
   FlatList,
+  RefreshControl,
+  Alert,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, CommonActions } from '@react-navigation/native';
-import { useDispatch, useSelector } from 'react-redux';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import { CommonActions } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../../redux/store';
-import { colors, radius, spacing, shadow } from '../../theme';
+import { selectActiveTables, reserveTable, unreserveTable } from '../../redux/slices/tablesSlice';
+import { colors, spacing, radius, shadow } from '../../theme';
 
 type TablesDashboardNavigationProp = NativeStackNavigationProp<any, 'TablesDashboard'>;
 
@@ -36,20 +41,29 @@ const TablesDashboardScreen: React.FC = () => {
   const navigation = useNavigation<TablesDashboardNavigationProp>();
   const ongoingOrderIds = useSelector((state: RootState) => state.orders.ongoingOrderIds || []);
   const ordersById = useSelector((state: RootState) => state.orders.ordersById || {});
-  const tablesById = useSelector((state: RootState) => state.tables.tablesById || {});
-  const tableIds = useSelector((state: RootState) => state.tables.tableIds || []);
+  const activeTables = useSelector(selectActiveTables);
+  const dispatch = useDispatch();
+
+  // Reservation modal state
+  const [reservationModalVisible, setReservationModalVisible] = useState(false);
+  const [reservationTargetTableId, setReservationTargetTableId] = useState<string | null>(null);
+  const [resHour, setResHour] = useState<string>('');
+  const [resMinute, setResMinute] = useState<string>('');
+  const [resAmPm, setResAmPm] = useState<'AM' | 'PM'>('PM');
+  const [resDayOffset, setResDayOffset] = useState<0 | 1>(0); // 0: Today, 1: Tomorrow
+  const [nowTs, setNowTs] = useState<number>(Date.now());
 
   useEffect(() => {
-    // Use real tables from Redux store, fallback to mock tables if none exist
-    if (tableIds.length > 0) {
-      const realTables: Table[] = tableIds.map((tableId: string) => {
-        const table = tablesById[tableId];
+    // Use active tables from Redux store, fallback to mock tables if none exist
+    if (activeTables.length > 0) {
+      const realTables: Table[] = activeTables.map((table) => {
+        const reservedActive = (table as any).isReserved && (!((table as any).reservedUntil) || (table as any).reservedUntil > Date.now());
         if (table.isMerged) {
           return {
             id: table.id,
             number: parseInt(table.name.replace(/\D/g, '')) || 1,
             capacity: table.totalSeats || table.seats,
-            status: 'available' as const,
+            status: reservedActive ? 'reserved' as const : 'available' as const,
             isMerged: true,
             mergedTableNames: table.mergedTableNames,
             totalSeats: table.totalSeats || table.seats,
@@ -59,7 +73,7 @@ const TablesDashboardScreen: React.FC = () => {
             id: table.id,
             number: parseInt(table.name.replace(/\D/g, '')) || 1,
             capacity: table.seats,
-            status: 'available' as const,
+            status: reservedActive ? 'reserved' as const : 'available' as const,
           };
         }
       });
@@ -74,7 +88,7 @@ const TablesDashboardScreen: React.FC = () => {
       }));
       setTables(mockTables);
     }
-  }, [tableIds, tablesById]);
+  }, [activeTables]);
 
   useEffect(() => {
     setTables(prevTables => 
@@ -83,10 +97,99 @@ const TablesDashboardScreen: React.FC = () => {
         if (activeOrderId) {
           return { ...table, status: 'occupied' as const, currentOrderId: activeOrderId };
         }
+        const reduxTable = activeTables.find(t => t.id === table.id) as any;
+        const reservedActive = reduxTable?.isReserved && (!reduxTable?.reservedUntil || reduxTable?.reservedUntil > Date.now());
+        if (reservedActive) {
+          return { ...table, status: 'reserved' as const, currentOrderId: undefined };
+        }
         return { ...table, status: 'available' as const, currentOrderId: undefined };
       })
     );
-  }, [ongoingOrderIds, ordersById]);
+  }, [ongoingOrderIds, ordersById, activeTables]);
+
+  // Tick every 30s to update remaining timers
+  useEffect(() => {
+    const id = setInterval(() => setNowTs(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const openReservationModal = (table: Table) => {
+    setReservationTargetTableId(table.id);
+    // Default to next 30-min slot today
+    const now = new Date();
+    let minutes = now.getMinutes();
+    const nextSlot = Math.ceil((minutes + 1) / 30) * 30;
+    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0, 0);
+    base.setMinutes(nextSlot % 60);
+    if (nextSlot >= 60) base.setHours(base.getHours() + 1);
+    let hour24 = base.getHours();
+    const ampm: 'AM' | 'PM' = hour24 >= 12 ? 'PM' : 'AM';
+    let hour12 = hour24 % 12; if (hour12 === 0) hour12 = 12;
+    setResHour(String(hour12));
+    setResMinute((base.getMinutes()).toString().padStart(2, '0'));
+    setResAmPm(ampm);
+    setResDayOffset(0);
+    setReservationModalVisible(true);
+  };
+
+  const handleLongPress = (table: Table) => {
+    const name = activeTables.find(t => t.id === table.id)?.name || `Table ${table.number}`;
+    if (table.status === 'reserved') {
+      Alert.alert(
+        'Unreserve Table',
+        `Remove reservation for ${name}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Unreserve', style: 'destructive', onPress: () => dispatch(unreserveTable({ id: table.id })) },
+        ]
+      );
+    } else if (table.status === 'available') {
+      openReservationModal(table);
+    } else if (table.status === 'occupied') {
+      Alert.alert('Cannot Reserve', `${name} is currently occupied.`);
+    } else if (table.isMerged) {
+      Alert.alert('Cannot Reserve', `${name} is a merged table.`);
+    }
+  };
+
+  const confirmReservation = () => {
+    if (!reservationTargetTableId) return;
+    const hourNum = parseInt(resHour, 10);
+    const minuteNum = parseInt(resMinute, 10);
+    if (isNaN(hourNum) || isNaN(minuteNum) || hourNum < 1 || hourNum > 12 || minuteNum < 0 || minuteNum > 59) {
+      Alert.alert('Invalid Time', 'Please enter a valid time.');
+      return;
+    }
+    let hour24 = hourNum % 12;
+    if (resAmPm === 'PM') hour24 += 12;
+    const now = new Date();
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + resDayOffset, hour24, minuteNum, 0, 0);
+    const ts = date.getTime();
+    if (ts <= Date.now()) {
+      Alert.alert('Invalid Time', 'Please choose a future time.');
+      return;
+    }
+    dispatch(reserveTable({ id: reservationTargetTableId, reservedUntil: ts }));
+    setReservationModalVisible(false);
+    setReservationTargetTableId(null);
+  };
+
+  const cancelReservationModal = () => {
+    setReservationModalVisible(false);
+    setReservationTargetTableId(null);
+  };
+
+  const getRemainingLabel = (tableId: string) => {
+    const t = activeTables.find(t0 => t0.id === tableId) as any;
+    if (!t?.isReserved || !t?.reservedUntil) return '';
+    const diff = t.reservedUntil - nowTs;
+    if (diff <= 0) return 'Expired';
+    const mins = Math.round(diff / 60000);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h > 0) return `${h}h ${m}m left`;
+    return `${m}m left`;
+  };
 
   const handleTablePress = (table: Table) => {
     try {
@@ -150,7 +253,7 @@ const TablesDashboardScreen: React.FC = () => {
           orderId: 'new'
         });
       } else {
-        Alert.alert('No Active Order', `Could not find an active order for ${tablesById[table.id]?.name || `Table ${table.number}`}.`);
+        Alert.alert('No Active Order', `Could not find an active order for ${activeTables.find(t => t.id === table.id)?.name || `Table ${table.number}`}.`);
       }
     } catch (error) {
       Alert.alert('Error', 'Unable to process table action');
@@ -173,10 +276,15 @@ const TablesDashboardScreen: React.FC = () => {
   };
 
   const renderTable = ({ item: table }: { item: Table }) => (
-    <View style={styles.tableCard}>
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onLongPress={() => handleLongPress(table)}
+      delayLongPress={400}
+      style={[styles.tableCard, table.status === 'reserved' && styles.tableCardReserved]}
+    >
       <View style={styles.cardHeader}>
         <Text style={styles.tableNumber}>
-          {tablesById[table.id]?.name || `Table ${table.number}`}
+          {activeTables.find(t => t.id === table.id)?.name || `Table ${table.number}`}
         </Text>
         <View
           style={[
@@ -200,6 +308,9 @@ const TablesDashboardScreen: React.FC = () => {
           </Text>
         </View>
       </View>
+      {table.status === 'reserved' && (
+        <Text style={styles.remainingTime}>{getRemainingLabel(table.id)}</Text>
+      )}
       
       {/* Show merged table information */}
       {table.isMerged && table.mergedTableNames && (
@@ -214,12 +325,21 @@ const TablesDashboardScreen: React.FC = () => {
         </View>
       )}
       
-      <TouchableOpacity style={styles.createOrderButton} onPress={() => handleTablePress(table)}>
+      <TouchableOpacity 
+        style={[styles.createOrderButton, table.status === 'reserved' && styles.createOrderButtonDisabled]}
+        onPress={() => {
+          if (table.status === 'reserved') {
+            Alert.alert('Reserved', 'This table is reserved. Long-press the card to unreserve.');
+            return;
+          }
+          handleTablePress(table);
+        }}
+      >
         <Text style={styles.createOrderButtonText}>
           {table.status === 'occupied' ? 'Manage Order' : 'Create Order'}
         </Text>
       </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 
   return (
@@ -239,6 +359,74 @@ const TablesDashboardScreen: React.FC = () => {
           </View>
         }
       />
+      {/* Reservation Modal */}
+      <Modal
+        visible={reservationModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={cancelReservationModal}
+      >
+        <View style={styles.reservationModalOverlay}>
+          <View style={styles.reservationModalContent}>
+            <Text style={styles.reservationTitle}>Reserve Table</Text>
+            <View style={styles.reservationRow}>
+              <TouchableOpacity
+                style={[styles.dayToggle, resDayOffset === 0 && styles.dayToggleActive]}
+                onPress={() => setResDayOffset(0)}
+              >
+                <Text style={[styles.dayToggleText, resDayOffset === 0 && styles.dayToggleTextActive]}>Today</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.dayToggle, resDayOffset === 1 && styles.dayToggleActive]}
+                onPress={() => setResDayOffset(1)}
+              >
+                <Text style={[styles.dayToggleText, resDayOffset === 1 && styles.dayToggleTextActive]}>Tomorrow</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.reservationRow}>
+              <TextInput
+                style={styles.timeInput}
+                placeholder="HH"
+                keyboardType="numeric"
+                value={resHour}
+                onChangeText={setResHour}
+                maxLength={2}
+                placeholderTextColor={colors.textSecondary}
+              />
+              <Text style={styles.colon}>:</Text>
+              <TextInput
+                style={styles.timeInput}
+                placeholder="MM"
+                keyboardType="numeric"
+                value={resMinute}
+                onChangeText={setResMinute}
+                maxLength={2}
+                placeholderTextColor={colors.textSecondary}
+              />
+              <TouchableOpacity
+                style={[styles.ampmToggle, resAmPm === 'AM' && styles.ampmToggleActive]}
+                onPress={() => setResAmPm('AM')}
+              >
+                <Text style={[styles.ampmText, resAmPm === 'AM' && styles.ampmTextActive]}>AM</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.ampmToggle, resAmPm === 'PM' && styles.ampmToggleActive]}
+                onPress={() => setResAmPm('PM')}
+              >
+                <Text style={[styles.ampmText, resAmPm === 'PM' && styles.ampmTextActive]}>PM</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.reservationActions}>
+              <TouchableOpacity style={styles.reservationCancel} onPress={cancelReservationModal}>
+                <Text style={styles.reservationCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.reservationConfirm} onPress={confirmReservation}>
+                <Text style={styles.reservationConfirmText}>Reserve</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -282,6 +470,10 @@ const styles = StyleSheet.create({
     ...shadow.card,
     marginBottom: spacing.md,
   },
+  tableCardReserved: {
+    opacity: 0.6,
+    borderColor: colors.warning,
+  },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -311,12 +503,20 @@ const styles = StyleSheet.create({
   badgeText_occupied: { color: colors.danger },
   badgeText_reserved: { color: colors.warning },
   badgeText_cleaning: { color: colors.primary },
+  remainingTime: {
+    color: colors.warning,
+    fontSize: 12,
+    marginBottom: spacing.sm,
+  },
   createOrderButton: {
     backgroundColor: colors.primary,
     borderRadius: radius.md,
     paddingVertical: spacing.md,
     alignItems: 'center',
     marginBottom: spacing.sm,
+  },
+  createOrderButtonDisabled: {
+    backgroundColor: colors.textMuted,
   },
   createOrderButtonText: {
     color: colors.textPrimary,
@@ -346,6 +546,115 @@ const styles = StyleSheet.create({
   totalSeats: {
     fontSize: 12,
     color: colors.textSecondary,
+  },
+  reservationModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reservationModalContent: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    width: '90%',
+    padding: spacing.lg,
+    ...shadow.card,
+  },
+  reservationTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
+  },
+  reservationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  dayToggle: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    marginHorizontal: spacing.xs,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    alignItems: 'center',
+  },
+  dayToggleActive: {
+    backgroundColor: colors.primary + '10',
+    borderColor: colors.primary,
+  },
+  dayToggleText: {
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  dayToggleTextActive: {
+    color: colors.primary,
+  },
+  timeInput: {
+    width: 60,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  colon: {
+    color: colors.textPrimary,
+    marginHorizontal: spacing.xs,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  ampmToggle: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    marginLeft: spacing.xs,
+  },
+  ampmToggleActive: {
+    backgroundColor: colors.info + '10',
+    borderColor: colors.info,
+  },
+  ampmText: {
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  ampmTextActive: {
+    color: colors.info,
+  },
+  reservationActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.md,
+  },
+  reservationCancel: {
+    flex: 1,
+    marginRight: spacing.xs,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.md,
+    alignItems: 'center',
+  },
+  reservationCancelText: {
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  reservationConfirm: {
+    flex: 1,
+    marginLeft: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  reservationConfirmText: {
+    color: 'white',
+    fontWeight: '700',
   },
 });
 

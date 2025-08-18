@@ -756,6 +756,217 @@ export const blePrinter = {
 		}
 	},
 
+	// Print customer history report
+	async printCustomerHistory(data: {
+		customerName: string;
+		customerPhone?: string;
+		periodLabel: string;
+		entries: Array<{ date: string; time?: string; ref: string; method: string; amount: number }>;
+		totalCount: number;
+		totalAmount: number;
+	}): Promise<void> {
+		if (!this.isSupported()) {
+			throw new Error('Bluetooth printing not available');
+		}
+		try {
+			await BluetoothEscposPrinter.printerInit();
+			await BluetoothEscposPrinter.printerAlign(getAlignment('CENTER'));
+			await BluetoothEscposPrinter.printText('CUSTOMER HISTORY\n', { widthtimes: 1, heighttimes: 1 });
+			await BluetoothEscposPrinter.printerAlign(getAlignment('LEFT'));
+			await BluetoothEscposPrinter.printText(`Customer: ${data.customerName}${data.customerPhone ? ' (' + data.customerPhone + ')' : ''}\n`, {});
+			await BluetoothEscposPrinter.printText(`Period: ${data.periodLabel}\n`, {});
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			await BluetoothEscposPrinter.printText('Date        Ref    Method  Amt\n', {});
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			for (const e of data.entries) {
+				const d = (e.date || '').padEnd(10);
+				const r = (e.ref || '').padEnd(6);
+				const m = (e.method || '').slice(0,7).padEnd(7);
+				const a = e.amount.toFixed(2).padStart(6);
+				await BluetoothEscposPrinter.printText(`${d} ${r} ${m} ${a}\n`, {});
+			}
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			await BluetoothEscposPrinter.printText(`Total Entries: ${data.totalCount}\n`, {});
+			await BluetoothEscposPrinter.printText(`Total Amount: ${data.totalAmount.toFixed(2)}\n`, { widthtimes: 1, heighttimes: 1 });
+			await BluetoothEscposPrinter.printAndFeed(3);
+		} catch (e) {
+			throw new Error(`Customer history print failed: ${e}`);
+		}
+	},
+
+	// Print credit statement report
+	async printCreditStatement(data: {
+		customerName: string;
+		customerPhone?: string;
+		entries: Array<{ date: string; ref: string; amount: number }>;
+		totalAmount: number;
+	}): Promise<void> {
+		if (!this.isSupported()) {
+			throw new Error('Bluetooth printing not available');
+		}
+		try {
+			await BluetoothEscposPrinter.printerInit();
+			await BluetoothEscposPrinter.printerAlign(getAlignment('CENTER'));
+			await BluetoothEscposPrinter.printText('CREDIT STATEMENT\n', { widthtimes: 1, heighttimes: 1 });
+			await BluetoothEscposPrinter.printerAlign(getAlignment('LEFT'));
+			await BluetoothEscposPrinter.printText(`Customer: ${data.customerName}${data.customerPhone ? ' (' + data.customerPhone + ')' : ''}\n`, {});
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			await BluetoothEscposPrinter.printText('Date        Ref        Amount\n', {});
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			for (const e of data.entries) {
+				const d = (e.date || '').padEnd(10);
+				const r = (e.ref || '').padEnd(10);
+				const a = e.amount.toFixed(2).padStart(8);
+				await BluetoothEscposPrinter.printText(`${d} ${r} ${a}\n`, {});
+			}
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			await BluetoothEscposPrinter.printText(`TOTAL DUE: ${data.totalAmount.toFixed(2)}\n`, { widthtimes: 1, heighttimes: 1 });
+			await BluetoothEscposPrinter.printAndFeed(3);
+		} catch (e) {
+			throw new Error(`Credit statement print failed: ${e}`);
+		}
+	},
+
+	// Print a daily summary report in thermal format
+	async printDailySummary(data: {
+		printTime: string;
+		date: string;
+		branch?: string;
+		grossSales: number;
+		serviceCharge: number;
+		discounts: number;
+		complementary?: number;
+		netSales: number;
+		salesByType: Array<{ type: string; count: number; amount: number }>;
+		paymentsNet: Array<{ type: string; amount: number }>;
+		audit?: { preReceiptCount?: number; receiptReprintCount?: number; voidReceiptCount?: number; totalVoidItemCount?: number };
+		firstReceipt?: { reference: string; sequence?: string; time: string; netAmount: number };
+		lastReceipt?: { reference: string; sequence?: string; time: string; netAmount: number };
+	}): Promise<void> {
+		if (!this.isSupported()) {
+			// Build a simple text and use Expo Print fallback
+			const lines: string[] = [];
+			lines.push(`Print time: ${data.printTime}`);
+			lines.push(`Date: ${data.date}`);
+			if (data.branch) lines.push(`Branch: ${data.branch}`);
+			lines.push('');
+			lines.push('Day Summary');
+			lines.push('');
+			lines.push('--- Sales Summary ---');
+			lines.push(`Gross Sales        ${data.grossSales.toFixed(1)}`);
+			lines.push(`Service Charge     ${data.serviceCharge.toFixed(1)}`);
+			lines.push(`Discounts          ${data.discounts.toFixed(1)}`);
+			lines.push(`Complementary      ${(data.complementary || 0).toFixed(1)}`);
+			lines.push(`Net Sales          ${data.netSales.toFixed(1)}`);
+			lines.push('');
+			lines.push('--- Sales ---');
+			lines.push('Type          Count   Amount');
+			data.salesByType.forEach(s => {
+				const type = (s.type || '').toUpperCase().padEnd(12);
+				const count = String(s.count).padStart(5);
+				const amt = s.amount.toFixed(1).padStart(9);
+				lines.push(`${type}${count} ${amt}`);
+			});
+			lines.push('');
+			lines.push('Total Payments Received (Net)');
+			lines.push('Type               Amount');
+			data.paymentsNet.forEach(p => {
+				const t = (p.type || '').toUpperCase().padEnd(14);
+				const a = p.amount.toFixed(1).padStart(9);
+				lines.push(`${t}${a}`);
+			});
+			lines.push('');
+			lines.push('--- Audit ---');
+			const audit = data.audit || {};
+			lines.push(`Pre Receipt Print Count  ${String(audit.preReceiptCount || 0)}`);
+			lines.push(`Receipt Re-print Count   ${String(audit.receiptReprintCount || 0)}`);
+			lines.push(`Void Receipt Count       ${String(audit.voidReceiptCount || 0)}`);
+			lines.push(`Total Void Item Count    ${String(audit.totalVoidItemCount || 0)}`);
+			lines.push('');
+			if (data.firstReceipt) {
+				lines.push('--- First Receipt ---');
+				lines.push(`Reference       ${data.firstReceipt.reference}`);
+				if (data.firstReceipt.sequence) lines.push(`Sequence Number ${data.firstReceipt.sequence}`);
+				lines.push(`Time            ${data.firstReceipt.time}`);
+				lines.push(`Net Amount      ${data.firstReceipt.netAmount.toFixed(1)}`);
+				lines.push('');
+			}
+			if (data.lastReceipt) {
+				lines.push('--- Last Receipt ---');
+				lines.push(`Reference       ${data.lastReceipt.reference}`);
+				if (data.lastReceipt.sequence) lines.push(`Sequence Number ${data.lastReceipt.sequence}`);
+				lines.push(`Time            ${data.lastReceipt.time}`);
+				lines.push(`Net Amount      ${data.lastReceipt.netAmount.toFixed(1)}`);
+				lines.push('');
+			}
+			lines.push('-- End --');
+			await this.printWithExpoPrint(lines.join('\n'), 'Day Summary');
+			return;
+		}
+
+		try {
+			await BluetoothEscposPrinter.printerInit();
+			await BluetoothEscposPrinter.printerAlign(getAlignment('LEFT'));
+			await BluetoothEscposPrinter.printText(`Print time: ${data.printTime}\n`, {});
+			await BluetoothEscposPrinter.printText(`Date: ${data.date}\n`, {});
+			if (data.branch) await BluetoothEscposPrinter.printText(`Branch: ${data.branch}\n`, {});
+			await BluetoothEscposPrinter.printerAlign(getAlignment('CENTER'));
+			await BluetoothEscposPrinter.printText('Day Summary\n', { widthtimes: 1, heighttimes: 1 });
+			await BluetoothEscposPrinter.printerAlign(getAlignment('LEFT'));
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			await BluetoothEscposPrinter.printText('Sales Summary\n', {});
+			await BluetoothEscposPrinter.printText(`Gross Sales           ${data.grossSales.toFixed(1)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Service Charge        ${data.serviceCharge.toFixed(1)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Discounts             ${data.discounts.toFixed(1)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Complementary         ${(data.complementary || 0).toFixed(1)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Net Sales             ${data.netSales.toFixed(1)}\n`, {});
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			await BluetoothEscposPrinter.printText('Sales\n', {});
+			await BluetoothEscposPrinter.printText('Type          Count   Amount\n', {});
+			for (const s of data.salesByType) {
+				const type = (s.type || '').toUpperCase().padEnd(12);
+				const count = String(s.count).padStart(5);
+				const amt = s.amount.toFixed(1).padStart(9);
+				await BluetoothEscposPrinter.printText(`${type}${count} ${amt}\n`, {});
+			}
+			await BluetoothEscposPrinter.printText('Total Payments Received (Net)\n', {});
+			await BluetoothEscposPrinter.printText('Type               Amount\n', {});
+			for (const p of data.paymentsNet) {
+				const t = (p.type || '').toUpperCase().padEnd(14);
+				const a = p.amount.toFixed(1).padStart(9);
+				await BluetoothEscposPrinter.printText(`${t}${a}\n`, {});
+			}
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			await BluetoothEscposPrinter.printText('Audit\n', {});
+			const audit = data.audit || {};
+			await BluetoothEscposPrinter.printText(`Pre Receipt Print Count  ${String(audit.preReceiptCount || 0)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Receipt Re-print Count   ${String(audit.receiptReprintCount || 0)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Void Receipt Count       ${String(audit.voidReceiptCount || 0)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Total Void Item Count    ${String(audit.totalVoidItemCount || 0)}\n`, {});
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			if (data.firstReceipt) {
+				await BluetoothEscposPrinter.printText('First Receipt\n', {});
+				await BluetoothEscposPrinter.printText(`Reference        ${data.firstReceipt.reference}\n`, {});
+				if (data.firstReceipt.sequence) await BluetoothEscposPrinter.printText(`Sequence Number  ${data.firstReceipt.sequence}\n`, {});
+				await BluetoothEscposPrinter.printText(`Time             ${data.firstReceipt.time}\n`, {});
+				await BluetoothEscposPrinter.printText(`Net Amount       ${data.firstReceipt.netAmount.toFixed(1)}\n`, {});
+			}
+			if (data.lastReceipt) {
+				await BluetoothEscposPrinter.printText('Last Receipt\n', {});
+				await BluetoothEscposPrinter.printText(`Reference        ${data.lastReceipt.reference}\n`, {});
+				if (data.lastReceipt.sequence) await BluetoothEscposPrinter.printText(`Sequence Number  ${data.lastReceipt.sequence}\n`, {});
+				await BluetoothEscposPrinter.printText(`Time             ${data.lastReceipt.time}\n`, {});
+				await BluetoothEscposPrinter.printText(`Net Amount       ${data.lastReceipt.netAmount.toFixed(1)}\n`, {});
+			}
+			await BluetoothEscposPrinter.printText('------------------------------\n', {});
+			await BluetoothEscposPrinter.printText('-- End --\n', {});
+			await BluetoothEscposPrinter.printAndFeed(3);
+		} catch (error) {
+			console.error('Daily summary print failed:', error);
+			throw new Error(`Daily summary print failed: ${error}`);
+		}
+	},
+
 	async printBOT(data: {
 		restaurantName: string;
 		ticketId: string;

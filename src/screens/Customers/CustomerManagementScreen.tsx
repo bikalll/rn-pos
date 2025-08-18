@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,11 +6,12 @@ import {
   ScrollView,
   TouchableOpacity,
   Modal,
-  TextInput,
   Alert,
   FlatList,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, shadow } from '../../theme';
@@ -33,13 +34,26 @@ const CustomerManagementScreen: React.FC = () => {
     phone: '',
     email: '',
     address: '',
-    creditAmount: '',
-    loyaltyPoints: '',
   });
+  const [searchQuery, setSearchQuery] = useState('');
 
   const dispatch = useDispatch();
+  const navigation = useNavigation();
   const customers = useSelector((state: RootState) => state.customers.customersById);
-  const customersList = Object.values(customers);
+  const [showCreditOnly, setShowCreditOnly] = useState(false);
+  const customersList = useMemo(() => {
+    let list = Object.values(customers) as Customer[];
+    if (showCreditOnly) {
+      list = list.filter(c => (c.creditAmount || 0) > 0.0001);
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (q.length > 0) {
+      list = list.filter(c =>
+        (c.name || '').toLowerCase().includes(q) || (c.phone || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [customers, showCreditOnly, searchQuery]);
 
   const resetForm = () => {
     setFormData({
@@ -47,25 +61,25 @@ const CustomerManagementScreen: React.FC = () => {
       phone: '',
       email: '',
       address: '',
-      creditAmount: '',
-      loyaltyPoints: '',
     });
   };
 
   const handleAddCustomer = () => {
-    if (!formData.name.trim()) {
-      Alert.alert('Error', 'Customer name is required');
+    const name = formData.name.trim();
+    const phone = formData.phone.trim();
+    if (!name && !phone) {
+      Alert.alert('Error', 'Enter customer name or phone number');
       return;
     }
 
     const newCustomer: Customer = {
       id: `CUST-${Date.now()}`,
-      name: formData.name.trim(),
-      phone: formData.phone.trim() || undefined,
+      name: name || phone,
+      phone: phone || undefined,
       email: formData.email.trim() || undefined,
       address: formData.address.trim() || undefined,
-      creditAmount: parseFloat(formData.creditAmount) || 0,
-      loyaltyPoints: parseInt(formData.loyaltyPoints) || 0,
+      creditAmount: 0,
+      loyaltyPoints: 0,
       visitCount: 0,
       createdAt: Date.now(),
     };
@@ -77,18 +91,19 @@ const CustomerManagementScreen: React.FC = () => {
   };
 
   const handleEditCustomer = () => {
-    if (!selectedCustomer || !formData.name.trim()) {
-      Alert.alert('Error', 'Customer name is required');
+    if (!selectedCustomer) return;
+    const name = formData.name.trim();
+    const phone = formData.phone.trim();
+    if (!name && !phone) {
+      Alert.alert('Error', 'Enter customer name or phone number');
       return;
     }
 
     const updatedCustomer: Partial<Customer> = {
-      name: formData.name.trim(),
-      phone: formData.phone.trim() || undefined,
+      name: name || phone,
+      phone: phone || undefined,
       email: formData.email.trim() || undefined,
       address: formData.address.trim() || undefined,
-      creditAmount: parseFloat(formData.creditAmount) || 0,
-      loyaltyPoints: parseInt(formData.loyaltyPoints) || 0,
     };
 
     dispatch(updateCustomer({ id: selectedCustomer.id, ...updatedCustomer }));
@@ -101,7 +116,7 @@ const CustomerManagementScreen: React.FC = () => {
   const handleDeleteCustomer = (customer: Customer) => {
     Alert.alert(
       'Delete Customer',
-      `Are you sure you want to delete ${customer.name}?`,
+      `Are you sure you want to delete ${customer.name || customer.phone || 'this customer'}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -123,16 +138,24 @@ const CustomerManagementScreen: React.FC = () => {
       phone: customer.phone || '',
       email: customer.email || '',
       address: customer.address || '',
-      creditAmount: customer.creditAmount?.toString() || '',
-      loyaltyPoints: customer.loyaltyPoints?.toString() || '',
     });
     setEditModalVisible(true);
   };
 
-  const renderCustomerCard = ({ item }: { item: Customer }) => (
+  const renderCustomerCard = ({ item }: { item: Customer }) => {
+    const isNumeric = (s?: string) => !!s && /^\d+$/.test(s.trim());
+    const displayName = (() => {
+      const name = (item.name || '').trim();
+      const phone = (item.phone || '').trim();
+      if (!name) return phone || 'Customer';
+      if (isNumeric(name) && phone && phone.length > name.length) return phone;
+      return name;
+    })();
+
+    return (
     <View style={styles.customerCard}>
       <View style={styles.customerHeader}>
-        <Text style={styles.customerName}>{item.name}</Text>
+        <Text style={styles.customerName}>{displayName}</Text>
         <TouchableOpacity
           style={styles.moreButton}
           onPress={() => openEditModal(item)}
@@ -165,7 +188,7 @@ const CustomerManagementScreen: React.FC = () => {
         
         <View style={styles.detailRow}>
           <Ionicons name="card-outline" size={16} color={colors.textSecondary} />
-          <Text style={[styles.detailText, { color: item.creditAmount && item.creditAmount > 0 ? colors.error : colors.success }]}>
+          <Text style={[styles.detailText, { color: item.creditAmount && item.creditAmount > 0 ? colors.danger : colors.success }]}>
             Credit: {item.creditAmount ? `Rs ${item.creditAmount.toFixed(2)}` : '-'}
           </Text>
         </View>
@@ -180,32 +203,57 @@ const CustomerManagementScreen: React.FC = () => {
       
       <View style={styles.cardActions}>
         <TouchableOpacity
-          style={styles.actionButton}
+          style={[styles.actionButton, styles.viewProfileButton]}
+          onPress={() => {
+            (navigation as any).navigate('CustomerProfile', { customerId: item.id });
+          }}
+        >
+          <Ionicons name="person-outline" size={16} color={'white'} />
+          <Text style={[styles.actionButtonText, styles.actionButtonTextOnDark]}>View Profile</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={[styles.actionButton, styles.editButton]}
           onPress={() => openEditModal(item)}
         >
-          <Ionicons name="create-outline" size={16} color={colors.primary} />
-          <Text style={styles.actionButtonText}>Edit</Text>
+          <Ionicons name="create-outline" size={16} color={'white'} />
+          <Text style={[styles.actionButtonText, styles.actionButtonTextOnDark]}>Edit</Text>
         </TouchableOpacity>
         
         <TouchableOpacity
           style={[styles.actionButton, styles.deleteButton]}
           onPress={() => handleDeleteCustomer(item)}
         >
-          <Ionicons name="trash-outline" size={16} color={colors.error} />
-          <Text style={[styles.actionButtonText, { color: colors.error }]}>Delete</Text>
+          <Ionicons name="trash-outline" size={16} color={'white'} />
+          <Text style={[styles.actionButtonText, styles.actionButtonTextOnDark]}>Delete</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Customer Management</Text>
-        <Text style={styles.subtitle}>Manage your customer information</Text>
-      </View>
-
       <View style={styles.content}>
+        <View style={styles.searchRow}>
+          <Ionicons name="search" size={18} color={colors.textSecondary} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search name or phone"
+            placeholderTextColor={colors.textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </View>
+        <View style={styles.filtersRow}>
+          <TouchableOpacity
+            style={[styles.filterChip, showCreditOnly && styles.filterChipActive]}
+            onPress={() => setShowCreditOnly(!showCreditOnly)}
+          >
+            <Ionicons name="card-outline" size={16} color={showCreditOnly ? 'white' : colors.textSecondary} />
+            <Text style={[styles.filterChipText, showCreditOnly && styles.filterChipTextActive]}>Credit Only</Text>
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => setAddModalVisible(true)}
@@ -308,30 +356,6 @@ const CustomerManagementScreen: React.FC = () => {
                 />
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Credit Amount</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.creditAmount}
-                  onChangeText={(text) => setFormData({ ...formData, creditAmount: text })}
-                  placeholder="0.00"
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Loyalty Points</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.loyaltyPoints}
-                  onChangeText={(text) => setFormData({ ...formData, loyaltyPoints: text })}
-                  placeholder="0"
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                />
-              </View>
-
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={styles.modalButtonCancel}
@@ -428,30 +452,6 @@ const CustomerManagementScreen: React.FC = () => {
                 />
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Credit Amount</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.creditAmount}
-                  onChangeText={(text) => setFormData({ ...formData, creditAmount: text })}
-                  placeholder="0.00"
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Loyalty Points</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.loyaltyPoints}
-                  onChangeText={(text) => setFormData({ ...formData, loyaltyPoints: text })}
-                  placeholder="0"
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                />
-              </View>
-
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={styles.modalButtonCancel}
@@ -484,23 +484,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  header: {
-    backgroundColor: colors.surface,
-    padding: spacing.lg,
-    paddingTop: spacing.xl,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.outline,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: colors.textPrimary,
-    marginBottom: spacing.xs,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: colors.textSecondary,
-  },
   content: {
     flex: 1,
     padding: spacing.lg,
@@ -513,7 +496,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: radius.md,
     marginBottom: spacing.lg,
-    ...shadow.sm,
+    ...shadow.card,
   },
   addButtonText: {
     color: 'white',
@@ -555,12 +538,60 @@ const styles = StyleSheet.create({
   listContainer: {
     paddingBottom: spacing.lg,
   },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.surface2,
+    marginBottom: spacing.md,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 14,
+    paddingVertical: spacing.xs,
+  },
+  filtersRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    backgroundColor: colors.surface2,
+    gap: spacing.xs,
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterChipText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: 'white',
+  },
   customerCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     marginBottom: spacing.md,
-    ...shadow.sm,
+    ...shadow.card,
   },
   customerHeader: {
     flexDirection: 'row',
@@ -609,8 +640,17 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: spacing.xs,
   },
+  actionButtonTextOnDark: {
+    color: 'white',
+  },
   deleteButton: {
-    backgroundColor: colors.error + '20',
+    backgroundColor: colors.danger,
+  },
+  editButton: {
+    backgroundColor: colors.primary,
+  },
+  viewProfileButton: {
+    backgroundColor: colors.info,
   },
   modalOverlay: {
     flex: 1,
@@ -623,7 +663,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     width: '90%',
     maxHeight: '80%',
-    ...shadow.lg,
+    ...shadow.card,
   },
   modalHeader: {
     flexDirection: 'row',

@@ -8,7 +8,6 @@ export default {
     orientation: "portrait",
     icon: "./assets/icon.png",
     userInterfaceStyle: "dark",
-    newArchEnabled: true,
     splash: {
       image: "./assets/splash-icon.png",
       resizeMode: "contain",
@@ -65,7 +64,11 @@ export default {
         projectId: "8a3a9553-7e86-4d63-b689-b441723699b3"
       },
       enableBluetooth: process.env.EXPO_PUBLIC_ENABLE_BLUETOOTH === 'true',
-      environment: process.env.EXPO_PUBLIC_ENV || 'development'
+      environment: process.env.EXPO_PUBLIC_ENV || 'development',
+      disableUpdates: true,
+      expoUpdates: {
+        enabled: false
+      }
     },
     runtimeVersion: "1.0.0",
     scheme: "rn-pos",
@@ -73,14 +76,6 @@ export default {
       "android",
       "ios"
     ],
-    developmentClient: {
-      silentLaunch: true
-    },
-    updates: {
-      enabled: true,
-      fallbackToCacheTimeout: 0,
-      url: "https://u.expo.dev/8a3a9553-7e86-4d63-b689-b441723699b3"
-    },
     assetBundlePatterns: [
       "**/*"
     ],
