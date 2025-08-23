@@ -36,7 +36,6 @@ export default function SettleCreditScreen() {
   const [splitPayments, setSplitPayments] = useState<SplitPaymentRow[]>([]);
   const [splitProcessed, setSplitProcessed] = useState(false);
 
-
   const isOrderForCustomer = (o: any) => {
     if (!o) return false;
     const cn = (o.payment?.customerName || o.customerName || '').trim();
@@ -130,23 +129,18 @@ export default function SettleCreditScreen() {
   const updateSplitPaymentRow = useCallback((index: number, field: keyof SplitPaymentRow, value: any) => {
     const next = [...splitPayments];
     const currentRow = next[index];
-
+    
     if (field === 'amountPaid') {
-      // Keep numeric amount in sync while typing for accurate totals
-      const parsed = parseFloat(value);
-      next[index] = { 
-        ...currentRow, 
-        amountPaid: value, 
-        amount: isNaN(parsed) ? 0 : parsed 
-      } as SplitPaymentRow;
+      // Only update amountPaid when typing, don't sync amount yet
+      next[index] = { ...currentRow, amountPaid: value } as SplitPaymentRow;
     } else if (field === 'amount') {
-      // Programmatic updates keep the display string aligned
+      // Only update amount when programmatically set, sync amountPaid
       next[index] = { ...currentRow, amount: value, amountPaid: value.toString() } as SplitPaymentRow;
     } else {
       // For other fields like method
       next[index] = { ...currentRow, [field]: value } as SplitPaymentRow;
     }
-
+    
     setSplitPayments(next);
   }, [splitPayments]);
 
@@ -424,8 +418,8 @@ export default function SettleCreditScreen() {
             </TouchableOpacity>
             {isSplitSettlement && (
               <View style={styles.splitSummaryInline}>
-                <Text style={styles.splitInlineText}>Amount to Settle:</Text>
-                <Text style={[styles.splitInlineAmount, { color: colors.primary }]}>Rs. {targetSettleTotal.toFixed(2)}</Text>
+                <Text style={styles.splitInlineText}>Split Total:</Text>
+                <Text style={[styles.splitInlineAmount, { color: splitIsValid ? colors.primary : colors.danger }]}>Rs. {getSplitTotal().toFixed(2)} / Rs. {targetSettleTotal.toFixed(2)}</Text>
               </View>
             )}
             {isSplitSettlement && !splitIsValid && (
@@ -502,9 +496,7 @@ export default function SettleCreditScreen() {
       <Modal
         visible={showSplitModal}
         animationType="slide"
-        transparent={true}
-        statusBarTranslucent={true}
-        presentationStyle="overFullScreen"
+        transparent
         onRequestClose={() => { setShowSplitModal(false); setIsSplitSettlement(false); setSplitProcessed(false); }}
       >
         <View style={styles.modalOverlay}>
@@ -515,14 +507,14 @@ export default function SettleCreditScreen() {
                 <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-            <ScrollView 
-              style={{ padding: spacing.lg }} 
-              contentContainerStyle={{ flexGrow: 1, paddingBottom: spacing.xl }}
-              showsVerticalScrollIndicator
+            <KeyboardAvoidingView 
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+              style={{ flex: 1 }}
             >
+              <ScrollView style={{ padding: spacing.lg }} contentContainerStyle={{ paddingBottom: spacing.xl }}>
                 <Text style={styles.splitDescription}>Split a total of Rs. {targetSettleTotal.toFixed(2)} across methods.</Text>
                 {splitPayments.map((sp, idx) => (
-                  <View key={`settle-split-row-${idx}`} style={styles.splitPaymentRow}>
+                  <View key={`settle-split-row-${sp.method}-${sp.amount}-${idx}`} style={styles.splitPaymentRow}>
                     <View style={styles.splitPaymentHeader}>
                       <Text style={styles.splitPaymentTitle}>Payment {idx + 1}</Text>
                       {splitPayments.length > 1 && (
@@ -575,8 +567,8 @@ export default function SettleCreditScreen() {
                 </TouchableOpacity>
                 <View style={styles.splitSummarySection}>
                   <View style={styles.splitTotalRow}>
-                    <Text style={styles.splitTotalLabel}>Amount to Settle</Text>
-                    <Text style={[styles.splitTotalAmount, { color: colors.primary }]}>Rs. {targetSettleTotal.toFixed(2)}</Text>
+                    <Text style={styles.splitTotalLabel}>Split Total</Text>
+                    <Text style={[styles.splitTotalAmount, { color: splitIsValid ? colors.primary : colors.danger }]}>Rs. {getSplitTotal().toFixed(2)} / Rs. {targetSettleTotal.toFixed(2)}</Text>
                   </View>
                   {!splitIsValid && (
                     <Text style={{ color: colors.danger, textAlign: 'center' }}>Split total must equal the settlement amount exactly.</Text>
@@ -589,7 +581,8 @@ export default function SettleCreditScreen() {
                 >
                   <Text style={styles.confirmSplitButtonText}>Confirm Split</Text>
                 </TouchableOpacity>
-            </ScrollView>
+              </ScrollView>
+            </KeyboardAvoidingView>
           </View>
         </View>
       </Modal>
