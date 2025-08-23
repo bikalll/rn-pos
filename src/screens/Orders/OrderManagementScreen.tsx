@@ -15,7 +15,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, shadow } from '../../theme';
 import { RootState } from '../../redux/store';
-import { setPayment, completeOrder, removeItem, updateItemQuantity } from '../../redux/slices/ordersSlice';
+import { setPayment, completeOrder, removeItem, updateItemQuantity, cancelOrder } from '../../redux/slices/ordersSlice';
+import { unmergeTables } from '../../redux/slices/tablesSlice';
 import { PrintService } from '../../services/printing';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { OrdersStackParamList } from '../../navigation/types';
@@ -150,7 +151,7 @@ const OrderManagementScreen: React.FC = () => {
         amount: total, // The actual order total
         amountPaid: amount, // Amount customer paid
         change: change, // Change given back
-        customerName: customerName || "Walk-in Customer",
+        customerName: customerName || customerPhone || "Walk-in Customer",
         customerPhone: customerPhone || "",
         timestamp: Date.now(),
       }
@@ -174,7 +175,7 @@ const OrderManagementScreen: React.FC = () => {
                 date: new Date().toLocaleDateString(),
                 time: new Date().toLocaleTimeString(),
                 tableNumber: tables[order.tableId]?.name || order.tableId,
-                customerName: customerName || "Walk-in Customer",
+                customerName: customerName || customerPhone || "Walk-in Customer",
                 items: order.items.map((item: any) => ({
                   name: item.name,
                   quantity: item.quantity,
@@ -257,7 +258,13 @@ const OrderManagementScreen: React.FC = () => {
           text: 'Yes',
           style: 'destructive',
           onPress: () => {
-            // dispatch(cancelOrder({ orderId })); // This line was removed from imports, so it's removed here.
+            try {
+              const isMerged = !!order.isMergedOrder && !!tables[order.tableId]?.isMerged;
+              if (isMerged) {
+                (dispatch as any)(unmergeTables({ mergedTableId: order.tableId }));
+              }
+              (dispatch as any)(cancelOrder({ orderId }));
+            } catch {}
             (navigation as any).navigate('Dashboard', { screen: 'TablesDashboard' });
           },
         },
@@ -280,7 +287,7 @@ const OrderManagementScreen: React.FC = () => {
          <View style={styles.section}>
            <Text style={styles.sectionTitle}>Order Items</Text>
            {order.items.map((item: any, index: number) => (
-             <View key={index} style={styles.orderItem}>
+             <View key={`${item.menuItemId || item.name}-${index}`} style={styles.orderItem}>
                <View style={styles.itemInfo}>
                  <Text style={styles.itemName}>{item.name}</Text>
                  {!!(item as any).description && (

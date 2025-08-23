@@ -86,7 +86,7 @@ const SettingsScreen: React.FC = () => {
       <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: spacing.xl }}>
         {settingsOptions.map((option, index) => (
           <TouchableOpacity
-            key={index}
+            key={`${option.title}-${index}`}
             style={styles.settingOption}
             onPress={option.onPress}
           >

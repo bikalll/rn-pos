@@ -96,14 +96,14 @@ const PrintDemo: React.FC = () => {
           <View style={styles.deviceList}>
             <Text style={styles.deviceTitle}>Paired Devices:</Text>
             {devices.paired.map((device: any, index: number) => (
-              <Text key={index} style={styles.deviceItem}>
+              <Text key={`paired-${device.address}-${index}`} style={styles.deviceItem}>
                 {device.name || 'Unknown'} ({device.address})
               </Text>
             ))}
             
             <Text style={styles.deviceTitle}>Found Devices:</Text>
             {devices.found.map((device: any, index: number) => (
-              <Text key={index} style={styles.deviceItem}>
+              <Text key={`found-${device.address}-${index}`} style={styles.deviceItem}>
                 {device.name || 'Unknown'} ({device.address})
               </Text>
             ))}

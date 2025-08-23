@@ -60,8 +60,21 @@ const EnhancedMenuManagementScreen: React.FC = () => {
     Alert.alert('Success', 'Menu item added successfully!');
   };
 
-  const handleEditItem = (item: MenuItem) => {
-    setEditingItem(item);
+  const handleEditItem = (item: ReduxMenuItem) => {
+    const formItem: MenuItem = {
+      id: item.id,
+      name: item.name,
+      description: item.description || '',
+      price: item.price,
+      category: item.category,
+      imageInfo: null,
+      isAvailable: item.isAvailable,
+      preparationTime: 15,
+      orderType: item.orderType,
+      allergens: [],
+      nutritionalInfo: {},
+    };
+    setEditingItem(formItem);
   };
 
   const handleUpdateItem = (updatedItem: MenuItem) => {

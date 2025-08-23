@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { colors, spacing, radius, shadow } from '../../theme';
 import { bluetoothDebugger, DebugInfo } from '../../services/bluetoothDebugger';
 import { bluetoothManager } from '../../services/bluetoothManager';
 import { blePrinter } from '../../services/blePrinter';
@@ -271,7 +272,7 @@ const BluetoothDebugScreen: React.FC = () => {
                 <Text style={styles.noDevices}>No devices found</Text>
               ) : (
                 debugInfo.deviceList.map((device, index) => (
-                  <View key={index} style={styles.deviceItem}>
+                  <View key={`${device.address}-${index}`} style={styles.deviceItem}>
                     <Text style={styles.deviceName}>{device.name}</Text>
                     <Text style={styles.deviceAddress}>{device.address}</Text>
                     <Text style={styles.deviceStatus}>
@@ -333,7 +334,7 @@ const BluetoothDebugScreen: React.FC = () => {
                 <Text style={styles.noLogs}>No debug logs</Text>
               ) : (
                 debugLog.map((log, index) => (
-                  <Text key={index} style={styles.logEntry}>{log}</Text>
+                  <Text key={`log-${index}`} style={styles.logEntry}>{log}</Text>
                 ))
               )}
             </View>
@@ -363,7 +364,7 @@ const BluetoothDebugScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.background,
   },
   scrollView: {
     flex: 1,
@@ -372,54 +373,55 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#fff',
+    padding: spacing.md,
+    backgroundColor: colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: colors.outline,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
+    color: colors.textPrimary,
   },
   refreshButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+    backgroundColor: colors.info,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
   },
   buttonText: {
     color: '#fff',
     fontWeight: '600',
   },
   loadingContainer: {
-    padding: 20,
+    padding: spacing.lg,
     alignItems: 'center',
   },
   loadingText: {
-    marginTop: 8,
-    color: '#666',
+    marginTop: spacing.xs,
+    color: colors.textSecondary,
   },
   content: {
-    padding: 16,
+    padding: spacing.md,
   },
   section: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginBottom: 16,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    marginBottom: spacing.md,
     overflow: 'hidden',
+    ...shadow.card,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#333',
-    padding: 16,
-    backgroundColor: '#f8f9fa',
+    color: colors.textPrimary,
+    padding: spacing.md,
+    backgroundColor: colors.surface2,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: colors.outline,
   },
   sectionContent: {
-    padding: 16,
+    padding: spacing.md,
   },
   statusItem: {
     flexDirection: 'row',
@@ -429,61 +431,61 @@ const styles = StyleSheet.create({
   },
   statusLabel: {
     fontSize: 16,
-    color: '#666',
+    color: colors.textSecondary,
     flex: 1,
   },
   statusValue: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: colors.textPrimary,
     flex: 1,
     textAlign: 'right',
   },
   deviceItem: {
-    paddingVertical: 8,
+    paddingVertical: spacing.xs,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: colors.outline,
   },
   deviceName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: colors.textPrimary,
   },
   deviceAddress: {
     fontSize: 14,
-    color: '#666',
+    color: colors.textSecondary,
     fontFamily: 'monospace',
   },
   deviceStatus: {
     fontSize: 12,
-    color: '#007AFF',
+    color: colors.info,
     marginTop: 2,
   },
   noDevices: {
     textAlign: 'center',
-    color: '#999',
+    color: colors.textMuted,
     fontStyle: 'italic',
   },
   actions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
   actionButton: {
     flex: 1,
-    marginHorizontal: 4,
-    paddingVertical: 12,
-    borderRadius: 8,
+    marginHorizontal: spacing.xs,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
     alignItems: 'center',
   },
   testButton: {
-    backgroundColor: '#28a745',
+    backgroundColor: colors.success,
   },
   reconnectButton: {
-    backgroundColor: '#ffc107',
+    backgroundColor: colors.warning,
   },
   clearButton: {
-    backgroundColor: '#dc3545',
+    backgroundColor: colors.danger,
   },
   logContainer: {
     maxHeight: 200,
@@ -491,31 +493,31 @@ const styles = StyleSheet.create({
   logEntry: {
     fontSize: 12,
     fontFamily: 'monospace',
-    color: '#666',
+    color: colors.textSecondary,
     marginBottom: 2,
   },
   noLogs: {
     textAlign: 'center',
-    color: '#999',
+    color: colors.textMuted,
     fontStyle: 'italic',
   },
   debugText: {
     fontSize: 12,
     fontFamily: 'monospace',
-    color: '#666',
+    color: colors.textSecondary,
     marginBottom: 4,
   },
   debugKey: {
     fontWeight: 'bold',
-    color: '#333',
+    color: colors.textPrimary,
   },
   debugButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    backgroundColor: colors.info,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: spacing.xs,
   },
   debugButtonText: {
     color: '#fff',

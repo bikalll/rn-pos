@@ -24,6 +24,7 @@ import MenuManagementScreen from "../screens/Menu/MenuManagementScreen";
 import ReportsScreen from "../screens/Reports/ReportsScreen";
 import CustomerManagementScreen from "../screens/Customers/CustomerManagementScreen";
 import CustomerProfileScreen from "../screens/Customers/CustomerProfileScreen";
+import SettleCreditScreen from "../screens/Customers/SettleCreditScreen";
 // Settings Screens
 import { SettingsScreen, TableManagementScreen, EmployeeManagementScreen, PrinterSetupScreen } from '../screens/Settings';
 import PrintDemo from "../components/PrintDemo";
@@ -31,7 +32,7 @@ import CustomDrawerContent from "../components/CustomDrawerContent";
 import BluetoothDebugScreen from "../screens/Settings/BluetoothDebugScreen";
 import PrintDebugComponent from "../components/PrintDebugComponent";
 
-export { 
+export type { 
   AuthStackParamList, 
   AppTabParamList, 
   DashboardStackParamList,
@@ -158,6 +159,7 @@ function CustomersStack() {
     <Stack.Navigator screenOptions={defaultHeader}>
       <Stack.Screen name="CustomerManagement" component={CustomerManagementScreen} options={withMenuHeader("Customers")} />
       <Stack.Screen name="CustomerProfile" component={CustomerProfileScreen} options={{ title: "Customer Profile" }} />
+      <Stack.Screen name="SettleCredit" component={SettleCreditScreen} options={{ title: "Settle Credit" }} />
     </Stack.Navigator>
   );
 }

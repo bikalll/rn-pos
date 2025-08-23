@@ -17,11 +17,10 @@ import { colors, spacing, radius, shadow } from '../../theme';
 import { RootState } from '../../redux/store';
 import { 
   updateCustomer, 
-  updateCreditAmount, 
   updateLoyaltyPoints 
 } from '../../redux/slices/customersSlice';
 import { Customer } from '../../utils/types';
-import { PrintService, printReport } from '../../services/printing';
+import { PrintService } from '../../services/printing';
 
 interface RouteParams {
   customerId: string;
@@ -37,7 +36,6 @@ const CustomerProfileScreen: React.FC = () => {
     email: '',
     address: '',
   });
-  const [creditAmount, setCreditAmount] = useState('');
   const [loyaltyPoints, setLoyaltyPoints] = useState('');
 
   const navigation = useNavigation();
@@ -47,7 +45,6 @@ const CustomerProfileScreen: React.FC = () => {
   const { customerId } = route.params as RouteParams;
   const customer = useSelector((state: RootState) => state.customers.customersById[customerId]);
   const ordersById = useSelector((state: RootState) => state.orders.ordersById);
-  const completedOrderIds = useSelector((state: RootState) => state.orders.completedOrderIds);
   const tables = useSelector((state: RootState) => state.tables.tablesById);
 
   if (!customer) {
@@ -76,19 +73,6 @@ const CustomerProfileScreen: React.FC = () => {
     dispatch(updateCustomer({ id: customer.id, ...updatedCustomer }));
     setEditModalVisible(false);
     Alert.alert('Success', 'Customer updated successfully!');
-  };
-
-  const handleUpdateCredit = () => {
-    const amount = parseFloat(creditAmount);
-    if (isNaN(amount)) {
-      Alert.alert('Error', 'Please enter a valid amount');
-      return;
-    }
-
-    dispatch(updateCreditAmount({ id: customer.id, amount }));
-    setCreditModalVisible(false);
-    setCreditAmount('');
-    Alert.alert('Success', 'Credit amount updated successfully!');
   };
 
   const handleUpdateLoyalty = () => {
@@ -140,23 +124,46 @@ const CustomerProfileScreen: React.FC = () => {
 
   const getOrderTimestamp = (o: any) => (o?.payment?.timestamp ? o.payment.timestamp : o?.createdAt);
 
+  const formatMethodLabel = (method: string) => {
+    if (method === 'Bank Card') return 'Card';
+    if (method === 'UPI') return 'Fonepay';
+    return method;
+  };
+
   // All transactions (any payment method) for this customer (include ongoing and completed)
   const allCustomerOrders = Object.values(ordersById || {})
     .filter((o: any) => isOrderForCustomer(o))
     .sort((a: any, b: any) => getOrderTimestamp(b) - getOrderTimestamp(a));
 
-  // Credit history subset
-  const creditOrders = allCustomerOrders.filter((o: any) => o.payment && o.payment.method === 'Credit');
+  // Credit history subset (include split payments with credit portion)
+  const creditOrders = allCustomerOrders.filter((o: any) => {
+    const p = o.payment as any;
+    if (!p) return false;
+    if (p.method === 'Credit') return true;
+    if (Array.isArray(p.splitPayments)) {
+      return p.splitPayments.some((sp: any) => sp.method === 'Credit' && Number(sp.amount) > 0);
+    }
+    return false;
+  });
 
   const shortId = (id: string) => `R${id.slice(-4)}`;
 
   const handlePrintStatement = async () => {
     try {
-      const totalCredit = creditOrders.reduce((sum: number, o: any) => sum + (o.payment?.amountPaid || 0), 0);
+      const totalCredit = creditOrders.reduce((sum: number, o: any) => {
+        const p = o.payment as any;
+        if (p?.method === 'Credit') return sum + (p.amountPaid || 0);
+        const creditPart = (p?.splitPayments || []).filter((sp: any) => sp.method === 'Credit').reduce((s: number, sp: any) => s + (Number(sp.amount) || 0), 0);
+        return sum + creditPart;
+      }, 0);
       const entries = creditOrders.map((o: any) => ({
         date: new Date(getOrderTimestamp(o)).toLocaleDateString(),
         ref: shortId(o.id),
-        amount: o.payment?.amountPaid || 0,
+        amount: (() => {
+          const p = o.payment as any;
+          if (p?.method === 'Credit') return p.amountPaid || 0;
+          return (p?.splitPayments || []).filter((sp: any) => sp.method === 'Credit').reduce((s: number, sp: any) => s + (Number(sp.amount) || 0), 0);
+        })(),
       }));
       const { blePrinter } = await import('../../services/blePrinter');
       await blePrinter.printCreditStatement({
@@ -217,8 +224,18 @@ const CustomerProfileScreen: React.FC = () => {
               <Text style={styles.creditActionButtonText}>Print Statement</Text>
             </TouchableOpacity>
           </View>
-          <Text style={styles.creditValue}>Rs {Number(customer.creditAmount || 0).toFixed(2)}</Text>
-          {customer.creditAmount && customer.creditAmount > 0 ? (
+          <View style={styles.creditValueRow}>
+            <Text style={styles.creditValue}>Rs {Number(customer.creditAmount || 0).toFixed(2)}</Text>
+            {(customer.creditAmount || 0) > 0 && (
+              <TouchableOpacity style={[styles.smallPillBtn, { backgroundColor: colors.success }]} onPress={() => {
+                (navigation as any).navigate('SettleCredit', { customerId: customer.id });
+              }}>
+                <Ionicons name="checkmark-circle-outline" size={14} color={'white'} />
+                <Text style={styles.smallBtnText}>Settle</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {(customer.creditAmount || 0) > 0 ? (
             <Text style={styles.creditSubtext}>Outstanding due across {creditOrders.length} bill(s)</Text>
           ) : (
             <Text style={styles.creditSubtextOk}>No outstanding credit</Text>
@@ -289,7 +306,7 @@ const CustomerProfileScreen: React.FC = () => {
         <View style={styles.section}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={styles.sectionTitle}>Customer History</Text>
-            <TouchableOpacity style={[styles.smallBtn, styles.smallBtnSecondary]} onPress={handlePrintCustomerHistory}>
+            <TouchableOpacity style={[styles.smallIconBtn, styles.smallBtnSecondary]} onPress={handlePrintCustomerHistory}>
               <Ionicons name="print-outline" size={16} color={'white'} />
             </TouchableOpacity>
           </View>
@@ -301,14 +318,32 @@ const CustomerProfileScreen: React.FC = () => {
                 <View key={o.id} style={styles.historyRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.historyTitle}>{new Date(getOrderTimestamp(o)).toLocaleDateString()} • {shortId(o.id)}</Text>
-                    <Text style={styles.historySub}>{o.payment?.method || 'Unpaid'}{o.payment?.timestamp ? ` • ${new Date(o.payment.timestamp).toLocaleTimeString()}` : ''}</Text>
+                    {(() => {
+                      const p = o.payment as any;
+                      if (Array.isArray(p?.splitPayments) && p.splitPayments.length > 0) {
+                        return null; // Hide summary line; show only detailed breakdown below
+                      }
+                      const timeStr = p?.timestamp ? ` • ${new Date(p.timestamp).toLocaleTimeString()}` : '';
+                      return (
+                        <Text style={styles.historySub}>{`${p?.method || 'Unpaid'}${timeStr}`}</Text>
+                      );
+                    })()}
+                    {Array.isArray((o.payment as any)?.splitPayments) && (o.payment as any).splitPayments.length > 0 && (
+                      <View style={{ marginTop: 2 }}>
+                        {(o.payment as any).splitPayments.map((sp: any, idx: number) => (
+                          <Text key={`${sp.method}-${sp.amount}-${idx}`} style={[styles.historySub, { fontSize: 11 }]}>
+                            {formatMethodLabel(sp.method)} Rs {(Number(sp.amount) || 0).toFixed(2)}
+                          </Text>
+                        ))}
+                      </View>
+                    )}
                   </View>
                   <Text style={styles.historyAmount}>Rs {(o.payment?.amountPaid ?? (o.items || []).reduce((s: number, it: any) => s + (it.price * it.quantity), 0)).toFixed(2)}</Text>
                   <View style={styles.historyActions}>
-                    <TouchableOpacity style={[styles.smallBtn, styles.smallBtnSecondary]} onPress={() => handleViewReceipt(o.id)}>
+                    <TouchableOpacity style={[styles.smallIconBtn, styles.smallBtnSecondary]} onPress={() => handleViewReceipt(o.id)}>
                       <Ionicons name="receipt-outline" size={14} color={'white'} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.smallBtn, styles.smallBtnPrimary]} onPress={() => handlePrintReceipt(o)}>
+                    <TouchableOpacity style={[styles.smallIconBtn, styles.smallBtnPrimary]} onPress={() => handlePrintReceipt(o)}>
                       <Ionicons name="print-outline" size={14} color={'white'} />
                     </TouchableOpacity>
                   </View>
@@ -316,7 +351,7 @@ const CustomerProfileScreen: React.FC = () => {
               ))
             )}
           </View>
-        </View>
+      </View>
 
         {/* Credit History */}
         <View style={styles.section}>
@@ -329,14 +364,38 @@ const CustomerProfileScreen: React.FC = () => {
                 <View key={o.id} style={styles.historyRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.historyTitle}>{new Date(o.createdAt).toLocaleDateString()} • {shortId(o.id)}</Text>
-                    <Text style={styles.historySub}>{o.payment?.customerName || customer.name}</Text>
+                    {(() => {
+                      const p = o.payment as any;
+                      if (Array.isArray(p?.splitPayments) && p.splitPayments.length > 0) {
+                        return null; // Hide extra text above split breakdown
+                      }
+                      return (
+                        <Text style={styles.historySub}>{o.payment?.customerName || customer.name}</Text>
+                      );
+                    })()}
+                    {Array.isArray((o.payment as any)?.splitPayments) && (o.payment as any).splitPayments.length > 0 && (
+                      <View style={{ marginTop: 2 }}>
+                        {(o.payment as any).splitPayments.map((sp: any, idx: number) => (
+                          <Text key={`${sp.method}-${sp.amount}-${idx}`} style={[styles.historySub, { fontSize: 11 }]}>
+                            {formatMethodLabel(sp.method)} Rs {(Number(sp.amount) || 0).toFixed(2)}
+                          </Text>
+                        ))}
+                      </View>
+                    )}
                   </View>
-                  <Text style={styles.historyAmount}>Rs {(o.payment?.amountPaid || 0).toFixed(2)}</Text>
+                  <Text style={styles.historyAmount}>
+                    Rs {(() => {
+                      const p = o.payment as any;
+                      if (p?.method === 'Credit') return (p.amountPaid || 0).toFixed(2);
+                      const creditPart = (p?.splitPayments || []).filter((sp: any) => sp.method === 'Credit').reduce((s: number, sp: any) => s + (Number(sp.amount) || 0), 0);
+                      return creditPart.toFixed(2);
+                    })()}
+                  </Text>
                   <View style={styles.historyActions}>
-                    <TouchableOpacity style={[styles.smallBtn, styles.smallBtnSecondary]} onPress={() => handleViewReceipt(o.id)}>
+                    <TouchableOpacity style={[styles.smallIconBtn, styles.smallBtnSecondary]} onPress={() => handleViewReceipt(o.id)}>
                       <Ionicons name="receipt-outline" size={14} color={'white'} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.smallBtn, styles.smallBtnPrimary]} onPress={() => handlePrintReceipt(o)}>
+                    <TouchableOpacity style={[styles.smallIconBtn, styles.smallBtnPrimary]} onPress={() => handlePrintReceipt(o)}>
                       <Ionicons name="print-outline" size={14} color={'white'} />
                     </TouchableOpacity>
                   </View>
@@ -355,7 +414,7 @@ const CustomerProfileScreen: React.FC = () => {
               onPress={() => setCreditModalVisible(true)}
             >
               <Ionicons name="card-outline" size={20} color={colors.warning} />
-              <Text style={styles.actionButtonText}>Update Credit</Text>
+              <Text style={styles.actionButtonText}>Credit Info</Text>
             </TouchableOpacity>
             
             <TouchableOpacity
@@ -433,7 +492,7 @@ const CustomerProfileScreen: React.FC = () => {
                   multiline
                   numberOfLines={2}
                 />
-              </View>
+      </View>
 
               <View style={styles.modalActions}>
                 <TouchableOpacity
@@ -465,7 +524,7 @@ const CustomerProfileScreen: React.FC = () => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Update Credit Amount</Text>
+              <Text style={styles.modalTitle}>Credit Management</Text>
               <TouchableOpacity onPress={() => setCreditModalVisible(false)}>
                 <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -474,33 +533,29 @@ const CustomerProfileScreen: React.FC = () => {
             <View style={styles.modalBody}>
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Current Credit: Rs {customer.creditAmount?.toFixed(2) || '0.00'}</Text>
-                <Text style={styles.inputLabel}>Amount to Add/Subtract</Text>
-                <TextInput
-                  style={styles.input}
-                  value={creditAmount}
-                  onChangeText={setCreditAmount}
-                  placeholder="e.g., 50.00 or -25.00"
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                />
-                <Text style={styles.inputHint}>
-                  Use positive numbers to add credit, negative to subtract
-                </Text>
+                
+                <View style={styles.creditInfoBox}>
+                  <Ionicons name="information-circle-outline" size={24} color={colors.info} />
+                  <Text style={styles.creditInfoText}>
+                    Credit amounts are automatically managed through the split payment system. 
+                    To add credit, use the split payment feature when processing orders.
+                  </Text>
+                </View>
+                
+                <View style={styles.creditInfoBox}>
+                  <Ionicons name="card-outline" size={24} color={colors.primary} />
+                  <Text style={styles.creditInfoText}>
+                    To settle credit, use the "Settle Credit" button in the Customers tab.
+                  </Text>
+                </View>
               </View>
 
               <View style={styles.modalActions}>
                 <TouchableOpacity
-                  style={styles.modalButtonCancel}
+                  style={[styles.modalButtonConfirm, styles.creditModalButton]}
                   onPress={() => setCreditModalVisible(false)}
                 >
-                  <Text style={styles.modalButtonCancelText}>Cancel</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={styles.modalButtonConfirm}
-                  onPress={handleUpdateCredit}
-                >
-                  <Text style={styles.modalButtonConfirmText}>Update Credit</Text>
+                  <Ionicons name="checkmark-circle-outline" size={20} color={'white'} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -556,9 +611,9 @@ const CustomerProfileScreen: React.FC = () => {
                   <Text style={styles.modalButtonConfirmText}>Update Points</Text>
                 </TouchableOpacity>
               </View>
-            </View>
-          </View>
         </View>
+      </View>
+    </View>
       </Modal>
     </SafeAreaView>
   );
@@ -591,6 +646,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: colors.textPrimary,
   },
+  creditValueRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
   creditValue: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -618,6 +679,19 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   creditActionButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  smallPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.danger,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+  },
+  smallBtnText: {
     color: 'white',
     fontWeight: '600',
   },
@@ -717,7 +791,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     marginLeft: spacing.sm,
   },
-  smallBtn: {
+  smallIconBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -752,6 +826,9 @@ const styles = StyleSheet.create({
   },
   loyaltyButton: {
     backgroundColor: colors.info + '20',
+  },
+  settleButton: {
+    backgroundColor: colors.success + '20',
   },
   errorText: {
     fontSize: 16,
@@ -813,8 +890,9 @@ const styles = StyleSheet.create({
   },
   modalActions: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: spacing.lg,
+    justifyContent: 'space-around',
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
   },
   modalButtonCancel: {
     flex: 1,
@@ -843,7 +921,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: 'white',
   },
+  creditInfoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface2,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.md,
+    gap: spacing.sm,
+  },
+  creditInfoText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  creditModalButton: {
+    backgroundColor: colors.success,
+  },
 });
 
 export default CustomerProfileScreen;
-
+ 

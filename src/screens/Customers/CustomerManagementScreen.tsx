@@ -11,7 +11,7 @@ import {
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, shadow } from '../../theme';
@@ -28,6 +28,7 @@ import { Customer } from '../../utils/types';
 const CustomerManagementScreen: React.FC = () => {
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
+  const [creditSettlementModalVisible, setCreditSettlementModalVisible] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [formData, setFormData] = useState({
     name: '',
@@ -36,10 +37,39 @@ const CustomerManagementScreen: React.FC = () => {
     address: '',
   });
   const [searchQuery, setSearchQuery] = useState('');
+  const [creditSettlementAmount, setCreditSettlementAmount] = useState('');
+  
+  // Credit Settlement Split Payment States
+  const [isSplitSettlement, setIsSplitSettlement] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
+  const [splitSettlementPayments, setSplitSettlementPayments] = useState<Array<{
+    method: 'Cash' | 'Card' | 'Bank' | 'Fonepay';
+    amount: number;
+    amountPaid: string;
+  }>>([]);
+  const [splitSettlementProcessed, setSplitSettlementProcessed] = useState(false);
+  const [isProcessingSettlement, setIsProcessingSettlement] = useState(false);
+  
+  // Normal Credit Settlement Payment Method State
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'Cash' | 'Card' | 'Bank' | 'Fonepay'>('Cash');
 
   const dispatch = useDispatch();
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const customers = useSelector((state: RootState) => state.customers.customersById);
+  // Open the same settlement modal when navigated with settleCustomerId
+  useFocusEffect(
+    React.useCallback(() => {
+      const settleCustomerId = (route.params as any)?.settleCustomerId;
+      if (settleCustomerId) {
+        const target = (customers as any)[settleCustomerId];
+        if (target && (target.creditAmount || 0) > 0) {
+          openCreditSettlementModal(target);
+        }
+        navigation.setParams({ settleCustomerId: undefined });
+      }
+    }, [route.params, customers])
+  );
   const [showCreditOnly, setShowCreditOnly] = useState(false);
   const customersList = useMemo(() => {
     let list = Object.values(customers) as Customer[];
@@ -142,6 +172,236 @@ const CustomerManagementScreen: React.FC = () => {
     setEditModalVisible(true);
   };
 
+  const handleSettleCredit = () => {
+    if (!selectedCustomer) return;
+    
+    const amount = parseFloat(creditSettlementAmount);
+    if (isNaN(amount) || amount <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+    
+    if (amount > (selectedCustomer.creditAmount || 0)) {
+      Alert.alert('Error', 'Settlement amount cannot exceed credit amount');
+      return;
+    }
+    
+    // Show confirmation dialog
+    Alert.alert(
+      'Confirm Credit Settlement',
+      `Are you sure you want to settle Rs. ${amount.toFixed(2)} of credit for ${selectedCustomer.name || selectedCustomer.phone || 'Customer'}?\n\nThis will reduce their credit balance from Rs. ${(selectedCustomer.creditAmount || 0).toFixed(2)} to Rs. ${((selectedCustomer.creditAmount || 0) - amount).toFixed(2)}.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm Settlement',
+          style: 'destructive',
+          onPress: () => {
+            // Process the credit settlement
+            dispatch(updateCreditAmount({ 
+              id: selectedCustomer.id, 
+              amount: -(amount) // Negative amount to reduce credit
+            }));
+            
+            setCreditSettlementModalVisible(false);
+            setCreditSettlementAmount('');
+            setSelectedCustomer(null);
+            
+            Alert.alert(
+              'Credit Settled Successfully', 
+              `Successfully settled Rs. ${amount.toFixed(2)} of credit for ${selectedCustomer.name || selectedCustomer.phone || 'Customer'}\n\nUpdated credit balance: Rs. ${((selectedCustomer.creditAmount || 0) - amount).toFixed(2)}`,
+              [{ text: 'OK' }]
+            );
+          }
+        }
+      ]
+    );
+  };
+
+  // Credit Settlement Split Payment Functions
+  const handleSplitSettlement = () => {
+    setIsSplitSettlement(true);
+    const amount = parseFloat(creditSettlementAmount);
+    if (amount > 0) {
+      const initialPayments = [
+        {
+          method: 'Cash' as const,
+          amount: amount / 2,
+          amountPaid: (amount / 2).toFixed(2)
+        },
+        {
+          method: 'Card' as const,
+          amount: amount / 2,
+          amountPaid: (amount / 2).toFixed(2)
+        }
+      ];
+      setSplitSettlementPayments(initialPayments);
+      setShowSplitModal(true);
+    }
+  };
+
+  const addSplitSettlementPayment = () => {
+    setSplitSettlementPayments([...splitSettlementPayments, {
+      method: 'Cash',
+      amount: 0,
+      amountPaid: '0'
+    }]);
+  };
+
+  const updateSplitSettlementPayment = (index: number, field: keyof typeof splitSettlementPayments[0], value: any) => {
+    const newSplitPayments = [...splitSettlementPayments];
+    
+    if (field === 'amountPaid') {
+      // Only update amountPaid when typing, don't sync amount yet
+      newSplitPayments[index] = { ...newSplitPayments[index], amountPaid: value };
+    } else if (field === 'amount') {
+      // Only update amount when programmatically set, sync amountPaid
+      newSplitPayments[index] = { ...newSplitPayments[index], amount: value, amountPaid: value.toString() };
+    } else if (field === 'method') {
+      newSplitPayments[index] = { ...newSplitPayments[index], method: value };
+    }
+    
+    setSplitSettlementPayments(newSplitPayments);
+  };
+
+  // Sync amounts after user finishes typing (on blur or when needed)
+  const syncAmounts = (index: number) => {
+    const row = splitSettlementPayments[index];
+    const parsed = parseFloat(row.amountPaid);
+    if (!isNaN(parsed) && parsed !== row.amount) {
+      updateSplitSettlementPayment(index, 'amount', parsed);
+    }
+  };
+
+  const removeSplitSettlementPayment = (index: number) => {
+    if (splitSettlementPayments.length > 1) {
+      const newSplitPayments = splitSettlementPayments.filter((_, i) => i !== index);
+      setSplitSettlementPayments(newSplitPayments);
+    }
+  };
+
+  const getSplitSettlementTotal = () => {
+    return splitSettlementPayments.reduce((sum, payment) => sum + (typeof payment.amount === 'number' ? payment.amount : parseFloat(payment.amountPaid) || 0), 0);
+  };
+
+  const validateSplitSettlement = () => {
+    const splitTotal = getSplitSettlementTotal();
+    const targetAmount = parseFloat(creditSettlementAmount);
+    return Math.abs(splitTotal - targetAmount) < 0.01; // must equal exactly (within epsilon)
+  };
+
+  const handleConfirmSplitSettlement = () => {
+    if (!validateSplitSettlement()) {
+      Alert.alert('Split Total Mismatch', 'Split total must equal the settlement amount exactly.');
+      return;
+    }
+    
+    setSplitSettlementProcessed(true);
+    setShowSplitModal(false);
+  };
+
+  const handleProcessSplitSettlement = () => {
+    if (isProcessingSettlement) return;
+    setIsProcessingSettlement(true);
+    
+    if (!validateSplitSettlement()) {
+      setIsProcessingSettlement(false);
+      Alert.alert('Split Total Mismatch', 'Allocate the exact settlement amount across split payments before processing.');
+      return;
+    }
+    
+    // Process the split settlement
+    const totalSettled = getSplitSettlementTotal();
+    
+    dispatch(updateCreditAmount({ 
+      id: selectedCustomer!.id, 
+      amount: -(totalSettled)
+    }));
+    
+    // Create settlement record for receipt printing
+    const settlementInfo = {
+      customerId: selectedCustomer!.id,
+      customerName: selectedCustomer!.name || selectedCustomer!.phone || 'Customer',
+      originalCredit: selectedCustomer!.creditAmount || 0,
+      amountSettled: totalSettled,
+      remainingCredit: (selectedCustomer!.creditAmount || 0) - totalSettled,
+      splitPayments: splitSettlementPayments,
+      timestamp: Date.now(),
+      method: 'Split Settlement'
+    };
+    
+    setCreditSettlementModalVisible(false);
+    setCreditSettlementAmount('');
+    setSelectedCustomer(null);
+    setIsSplitSettlement(false);
+    setSplitSettlementPayments([]);
+    setSplitSettlementProcessed(false);
+    setIsProcessingSettlement(false);
+    
+    // Show success and print option
+    Alert.alert(
+      'Split Settlement Successful',
+      `Successfully settled Rs. ${totalSettled.toFixed(2)} of credit for ${selectedCustomer!.name || selectedCustomer!.phone || 'Customer'}`,
+      [
+        { text: 'Done', onPress: () => {} },
+        { text: 'Print Receipt', onPress: () => printSettlementReceipt(settlementInfo) }
+      ]
+    );
+  };
+
+  const printSettlementReceipt = async (settlementInfo: any) => {
+    try {
+      // Import PrintService
+      const { PrintService } = await import('../../services/printing');
+      
+      // Create a mock order structure for receipt printing
+      const mockOrder = {
+        id: `SETTLEMENT-${Date.now()}`,
+        createdAt: settlementInfo.timestamp,
+        items: [{
+          name: 'Credit Settlement',
+          quantity: 1,
+          price: settlementInfo.amountSettled
+        }],
+        taxPercentage: 0,
+        serviceChargePercentage: 0,
+        discountPercentage: 0,
+        payment: {
+          method: 'Split Settlement',
+          amount: settlementInfo.amountSettled,
+          amountPaid: settlementInfo.amountSettled,
+          change: 0,
+          customerName: settlementInfo.customerName,
+          customerPhone: '',
+          timestamp: settlementInfo.timestamp,
+          splitPayments: settlementInfo.splitPayments
+        }
+      };
+      
+      const mockTable = { name: 'Credit Settlement' };
+      
+      const result = await PrintService.printReceiptFromOrder(mockOrder, mockTable);
+      
+      if (result.success) {
+        Alert.alert('Success', 'Settlement receipt printed successfully!');
+      } else {
+        Alert.alert('Print Failed', result.message);
+      }
+    } catch (error) {
+      console.error('Print error:', error);
+      Alert.alert('Print Error', 'Failed to print settlement receipt');
+    }
+  };
+
+  const openCreditSettlementModal = (customer: Customer) => {
+    if ((customer.creditAmount || 0) <= 0) {
+      Alert.alert('No Credit', 'This customer has no outstanding credit to settle.');
+      return;
+    }
+    setSelectedCustomer(customer);
+    setCreditSettlementAmount('');
+    setCreditSettlementModalVisible(true);
+  };
+
   const renderCustomerCard = ({ item }: { item: Customer }) => {
     const isNumeric = (s?: string) => !!s && /^\d+$/.test(s.trim());
     const displayName = (() => {
@@ -191,6 +451,15 @@ const CustomerManagementScreen: React.FC = () => {
           <Text style={[styles.detailText, { color: item.creditAmount && item.creditAmount > 0 ? colors.danger : colors.success }]}>
             Credit: {item.creditAmount ? `Rs ${item.creditAmount.toFixed(2)}` : '-'}
           </Text>
+          {item.creditAmount && item.creditAmount > 0 && (
+            <TouchableOpacity
+              style={styles.settleCreditButton}
+              onPress={() => (navigation as any).navigate('SettleCredit', { customerId: item.id })}
+            >
+              <Ionicons name="checkmark-circle-outline" size={14} color="white" />
+              <Text style={styles.settleCreditButtonText}>Settle</Text>
+            </TouchableOpacity>
+          )}
         </View>
         
         <View style={styles.detailRow}>
@@ -475,6 +744,333 @@ const CustomerManagementScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Credit Settlement Modal */}
+      <Modal
+        visible={creditSettlementModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setCreditSettlementModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Credit Settlement</Text>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => {
+                  setCreditSettlementModalVisible(false);
+                  setSelectedCustomer(null);
+                  setCreditSettlementAmount('');
+                  setIsSplitSettlement(false);
+                  setSplitSettlementPayments([]);
+                  setSplitSettlementProcessed(false);
+                }}
+              >
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
+                {/* Customer Summary */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Customer Summary</Text>
+                  <View style={styles.customerSummaryCard}>
+                    <View style={styles.customerSummaryRow}>
+                      <Text style={styles.customerSummaryLabel}>Name:</Text>
+                      <Text style={styles.customerSummaryValue}>{selectedCustomer?.name || 'N/A'}</Text>
+                    </View>
+                    <View style={styles.customerSummaryRow}>
+                      <Text style={styles.customerSummaryLabel}>Phone:</Text>
+                      <Text style={styles.customerSummaryValue}>{selectedCustomer?.phone || 'N/A'}</Text>
+                    </View>
+                    <View style={styles.customerSummaryRow}>
+                      <Text style={styles.customerSummaryLabel}>Current Credit:</Text>
+                      <Text style={[styles.customerSummaryValue, { color: colors.danger, fontWeight: 'bold' }]}>
+                        Rs. {(selectedCustomer?.creditAmount || 0).toFixed(2)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Settlement Amount Input */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Settlement Amount</Text>
+                  <View style={styles.amountCard}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Amount to Settle</Text>
+                      <TextInput
+                        style={[
+                          styles.amountInput,
+                          parseFloat(creditSettlementAmount) > (selectedCustomer?.creditAmount || 0) && styles.amountInputError
+                        ]}
+                        value={creditSettlementAmount}
+                        onChangeText={(value) => {
+                          const numValue = parseFloat(value) || 0;
+                          const maxCredit = selectedCustomer?.creditAmount || 0;
+                          
+                          if (numValue > maxCredit) {
+                            // Don't allow amounts greater than credit
+                            return;
+                          }
+                          
+                          setCreditSettlementAmount(value);
+                        }}
+                        placeholder="0.00"
+                        placeholderTextColor={colors.textSecondary}
+                        keyboardType="decimal-pad"
+                      />
+                      {parseFloat(creditSettlementAmount) > (selectedCustomer?.creditAmount || 0) && (
+                        <Text style={styles.errorText}>
+                          Amount cannot exceed credit balance
+                        </Text>
+                      )}
+                    </View>
+                    
+                    <View style={styles.changeRow}>
+                      <Text style={styles.changeLabel}>Remaining Credit:</Text>
+                      <Text style={styles.changeAmount}>
+                        Rs. {Math.max(0, (selectedCustomer?.creditAmount || 0) - (parseFloat(creditSettlementAmount) || 0)).toFixed(2)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Payment Method Selection */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Payment Method</Text>
+                  <View style={styles.paymentMethodsGrid}>
+                    <TouchableOpacity
+                      style={[styles.paymentMethodCard, selectedPaymentMethod === 'Cash' && styles.paymentMethodSelected]}
+                      onPress={() => setSelectedPaymentMethod('Cash')}
+                    >
+                      <Ionicons name="cash-outline" size={24} color={selectedPaymentMethod === 'Cash' ? colors.primary : colors.textSecondary} />
+                      <Text style={[styles.paymentMethodLabel, selectedPaymentMethod === 'Cash' && styles.paymentMethodLabelSelected]}>
+                        Cash
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={[styles.paymentMethodCard, selectedPaymentMethod === 'Card' && styles.paymentMethodSelected]}
+                      onPress={() => setSelectedPaymentMethod('Card')}
+                    >
+                      <Ionicons name="card-outline" size={24} color={selectedPaymentMethod === 'Card' ? colors.primary : colors.textSecondary} />
+                      <Text style={[styles.paymentMethodLabel, selectedPaymentMethod === 'Card' && styles.paymentMethodLabelSelected]}>
+                        Card
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={[styles.paymentMethodCard, selectedPaymentMethod === 'Bank' && styles.paymentMethodSelected]}
+                      onPress={() => setSelectedPaymentMethod('Bank')}
+                    >
+                      <Ionicons name="business-outline" size={24} color={selectedPaymentMethod === 'Bank' ? colors.primary : colors.textSecondary} />
+                      <Text style={[styles.paymentMethodLabel, selectedPaymentMethod === 'Bank' && styles.paymentMethodLabelSelected]}>
+                        Bank
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={[styles.paymentMethodCard, selectedPaymentMethod === 'Fonepay' && styles.paymentMethodSelected]}
+                      onPress={() => setSelectedPaymentMethod('Fonepay')}
+                    >
+                      <Ionicons name="wallet-outline" size={24} color={selectedPaymentMethod === 'Fonepay' ? colors.primary : colors.textSecondary} />
+                      <Text style={[styles.paymentMethodLabel, selectedPaymentMethod === 'Fonepay' && styles.paymentMethodLabelSelected]}>
+                        Fonepay
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Split Settlement Option */}
+                {creditSettlementAmount && parseFloat(creditSettlementAmount) > 0 && (
+                  <View style={styles.section}>
+                    <TouchableOpacity 
+                      style={styles.splitBillButton}
+                      onPress={handleSplitSettlement}
+                    >
+                      <Ionicons name="list-outline" size={20} color={colors.primary} />
+                      <Text style={styles.splitBillButtonText}>Split Settlement</Text>
+                    </TouchableOpacity>
+                    {isSplitSettlement && (
+                      <View style={styles.splitSummaryInline}>
+                        <Text style={styles.splitInlineText}>Split Total:</Text>
+                        <Text style={[styles.splitInlineAmount, { 
+                          color: validateSplitSettlement() ? colors.primary : colors.danger 
+                        }]}>Rs. {getSplitSettlementTotal().toFixed(2)} / Rs. {parseFloat(creditSettlementAmount).toFixed(2)}</Text>
+                      </View>
+                    )}
+                    {isSplitSettlement && !validateSplitSettlement() && (
+                      <Text style={{ color: colors.danger, marginTop: spacing.xs, textAlign: 'center' }}>
+                        Split must equal the settlement amount exactly.
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {/* Settlement Summary */}
+                {creditSettlementAmount && parseFloat(creditSettlementAmount) > 0 && !isSplitSettlement && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Settlement Summary</Text>
+                    <View style={styles.settlementSummaryCard}>
+                      <View style={styles.settlementSummaryRow}>
+                        <Text style={styles.settlementSummaryLabel}>Current Credit:</Text>
+                        <Text style={styles.settlementSummaryValue}>
+                          Rs. {(selectedCustomer?.creditAmount || 0).toFixed(2)}
+                        </Text>
+                      </View>
+                      <View style={styles.settlementSummaryRow}>
+                        <Text style={styles.settlementSummaryLabel}>Settlement Amount:</Text>
+                        <Text style={styles.settlementSummaryValue}>
+                          Rs. {parseFloat(creditSettlementAmount).toFixed(2)}
+                        </Text>
+                      </View>
+                      <View style={styles.settlementSummaryRow}>
+                        <Text style={styles.settlementSummaryLabel}>Payment Method:</Text>
+                        <Text style={styles.settlementSummaryValue}>
+                          {selectedPaymentMethod}
+                        </Text>
+                      </View>
+                      <View style={styles.settlementSummaryRow}>
+                        <Text style={styles.settlementSummaryLabel}>Remaining Credit:</Text>
+                        <Text style={[
+                          styles.settlementSummaryValue, 
+                          { 
+                            color: (selectedCustomer?.creditAmount || 0) - (parseFloat(creditSettlementAmount) || 0) > 0 ? colors.danger : colors.success 
+                          }
+                        ]}>
+                          Rs. {Math.max(0, (selectedCustomer?.creditAmount || 0) - (parseFloat(creditSettlementAmount) || 0)).toFixed(2)}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+
+            {/* Process Settlement Button */}
+            <View style={styles.modalFooter}>
+              {!isSplitSettlement ? (
+                <TouchableOpacity
+                  style={[
+                    styles.processPaymentButton, 
+                    (!creditSettlementAmount.trim() || parseFloat(creditSettlementAmount) <= 0 || parseFloat(creditSettlementAmount) > (selectedCustomer?.creditAmount || 0)) && 
+                    styles.processPaymentButtonDisabled
+                  ]}
+                  onPress={handleSettleCredit}
+                  disabled={!creditSettlementAmount.trim() || parseFloat(creditSettlementAmount) <= 0 || parseFloat(creditSettlementAmount) > (selectedCustomer?.creditAmount || 0)}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={24} color="white" />
+                  <Text style={styles.processPaymentButtonText}>Process Settlement</Text>
+                </TouchableOpacity>
+              ) : splitSettlementProcessed ? (
+                <TouchableOpacity
+                  style={[
+                    styles.processPaymentButton, 
+                    !validateSplitSettlement() && styles.processPaymentButtonDisabled
+                  ]}
+                  onPress={handleProcessSplitSettlement}
+                  disabled={!validateSplitSettlement() || isProcessingSettlement}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={24} color="white" />
+                  <Text style={styles.processPaymentButtonText}>
+                    {isProcessingSettlement ? 'Processing...' : 'Process Split Settlement'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Split Settlement Modal */}
+      <Modal
+        visible={showSplitModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => { setShowSplitModal(false); setIsSplitSettlement(false); setSplitSettlementProcessed(false); }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Split Settlement</Text>
+              <TouchableOpacity onPress={() => { setShowSplitModal(false); setIsSplitSettlement(false); setSplitSettlementProcessed(false); }}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ padding: spacing.lg }} contentContainerStyle={{ paddingBottom: spacing.xl }}>
+              <Text style={styles.splitDescription}>Split a total of Rs. {parseFloat(creditSettlementAmount).toFixed(2)} across methods.</Text>
+              {splitSettlementPayments.map((sp, idx) => (
+                <View key={`settle-split-row-${sp.method}-${sp.amount}-${idx}`} style={styles.splitPaymentRow}>
+                  <View style={styles.splitPaymentHeader}>
+                    <Text style={styles.splitPaymentTitle}>Payment {idx + 1}</Text>
+                    {splitSettlementPayments.length > 1 && (
+                      <TouchableOpacity onPress={() => removeSplitSettlementPayment(idx)}>
+                        <Ionicons name="trash-outline" size={20} color={colors.danger} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <View style={styles.splitPaymentInputs}>
+                    <View style={styles.splitMethodSelect}>
+                      <Text style={styles.splitInputLabel}>Method</Text>
+                      <View style={styles.splitMethodButtons}>
+                        {[
+                          { method: 'Cash' as const, icon: 'cash-outline', label: 'Cash' },
+                          { method: 'Bank' as const, icon: 'business-outline', label: 'Bank' },
+                          { method: 'Card' as const, icon: 'card-outline', label: 'Card' },
+                          { method: 'Fonepay' as const, icon: 'wallet-outline', label: 'Fonepay' },
+                        ].map(({ method, icon, label }) => (
+                          <TouchableOpacity
+                            key={method}
+                            style={[styles.splitMethodButton, sp.method === method && styles.splitMethodButtonSelected]}
+                            onPress={() => updateSplitSettlementPayment(idx, 'method', method)}
+                          >
+                            <Ionicons name={icon as any} size={16} color={sp.method === method ? 'white' : colors.textSecondary} />
+                            <Text style={[styles.splitMethodButtonText, sp.method === method && styles.splitMethodButtonTextSelected]}>{label}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                    <View style={styles.splitAmountInput}>
+                      <Text style={styles.splitInputLabel}>Amount (Rs.)</Text>
+                      <TextInput
+                        style={styles.splitAmountTextInput}
+                        value={sp.amountPaid}
+                        onChangeText={(val) => updateSplitSettlementPayment(idx, 'amountPaid', val)}
+                        onBlur={() => syncAmounts(idx)}
+                        keyboardType="decimal-pad"
+                        placeholder="0.00"
+                        placeholderTextColor={colors.textSecondary}
+                        returnKeyType="next"
+                        blurOnSubmit={false}
+                      />
+                    </View>
+                  </View>
+                </View>
+              ))}
+              <TouchableOpacity style={styles.addSplitPaymentButton} onPress={addSplitSettlementPayment}>
+                <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
+                <Text style={styles.addSplitPaymentButtonText}>Add Another Method</Text>
+              </TouchableOpacity>
+              <View style={styles.splitSummarySection}>
+                <View style={styles.splitTotalRow}>
+                  <Text style={styles.splitTotalLabel}>Split Total</Text>
+                  <Text style={[styles.splitTotalAmount, { color: validateSplitSettlement() ? colors.primary : colors.danger }]}>Rs. {getSplitSettlementTotal().toFixed(2)} / Rs. {parseFloat(creditSettlementAmount).toFixed(2)}</Text>
+                </View>
+                {!validateSplitSettlement() && (
+                  <Text style={{ color: colors.danger, textAlign: 'center' }}>Split total must equal the settlement amount exactly.</Text>
+                )}
+              </View>
+              <TouchableOpacity
+                style={[styles.confirmSplitButton, !validateSplitSettlement() && styles.confirmSplitButtonDisabled]}
+                disabled={!validateSplitSettlement()}
+                onPress={handleConfirmSplitSettlement}
+              >
+                <Text style={styles.confirmSplitButtonText}>Confirm Split</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -508,10 +1104,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: colors.textPrimary,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.md,
   },
   sectionSubtitle: {
     fontSize: 14,
@@ -659,11 +1255,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.background,
+    marginHorizontal: '2.5%', // 2.5% margin on each side = 95% width
+    marginVertical: 20, // Keep vertical margins for proper spacing
     borderRadius: radius.lg,
-    width: '90%',
-    maxHeight: '80%',
-    ...shadow.card,
+    maxHeight: '85%',
+    minHeight: '75%',
+    paddingBottom: 25,
+    width: '95%', // Explicitly set width to 95%
   },
   modalHeader: {
     flexDirection: 'row',
@@ -734,6 +1333,539 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: 'white',
   },
+  modalButtonDisabled: {
+    backgroundColor: colors.outline,
+    opacity: 0.7,
+  },
+  settleCreditButton: {
+    backgroundColor: colors.success,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    marginLeft: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  settleCreditButtonText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  creditSettlementInfo: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  creditSettlementLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  creditSettlementValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.danger,
+    marginBottom: spacing.xs,
+  },
+  settlementSummary: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  
+  inputHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+    marginLeft: spacing.lg,
+  },
+  quickActionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  quickActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    gap: spacing.xs,
+  },
+  settleFullButton: {
+    backgroundColor: colors.success,
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  settleHalfButton: {
+    backgroundColor: colors.warning,
+    flex: 1,
+    marginLeft: spacing.sm,
+  },
+  quickActionButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  creditHistoryInfo: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  creditHistoryTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  creditHistoryText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  // New styles for Credit Settlement Modal
+  modalScrollContent: {
+    flexGrow: 1,
+    padding: spacing.lg,
+  },
+  summaryCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    ...shadow.card,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  summaryLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  summaryValue: {
+    fontSize: 14,
+    color: colors.textPrimary,
+  },
+  totalAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.primary,
+  },
+  paymentMethodsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  paymentMethodCard: {
+    flex: 1,
+    minWidth: '45%',
+    alignItems: 'center',
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    borderColor: colors.outline,
+    backgroundColor: colors.surface,
+    gap: spacing.sm,
+  },
+  paymentMethodSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '10',
+  },
+  paymentMethodLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  paymentMethodLabelSelected: {
+    color: colors.primary,
+    fontWeight: 'bold',
+  },
+  amountCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    ...shadow.card,
+  },
+  amountInput: {
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    fontSize: 20,
+    color: colors.textPrimary,
+    backgroundColor: colors.background,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+  amountInputError: {
+    borderColor: colors.danger,
+    borderWidth: 1,
+  },
+  errorText: {
+    color: colors.danger,
+    fontSize: 12,
+    marginTop: spacing.xs,
+    textAlign: 'center',
+  },
+  changeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.outline,
+  },
+  changeLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  changeAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.success,
+  },
+  quickActionsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+  },
+
+
+  modalFooter: {
+    padding: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.outline,
+  },
+  settlementSummaryCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    ...shadow.card,
+  },
+  settlementSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  settlementSummaryLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  settlementSummaryValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  processPaymentButton: {
+    backgroundColor: colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    ...shadow.card,
+  },
+  processPaymentButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginLeft: spacing.sm,
+  },
+  processPaymentButtonDisabled: {
+    backgroundColor: colors.textMuted,
+  },
+  splitBillButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary + '10',
+    borderWidth: 1,
+    borderColor: colors.primary,
+    gap: spacing.xs,
+  },
+  splitBillButtonText: {
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  splitInfoCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    ...shadow.card,
+    marginTop: spacing.md,
+  },
+  splitInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  splitInfoLeft: {
+    flex: 1,
+  },
+  splitInfoLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  splitInfoMethod: {
+    fontSize: 14,
+    color: colors.textPrimary,
+  },
+  splitInfoAmount: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: colors.primary,
+  },
+  splitInfoTotal: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.outline,
+  },
+  splitInfoTotalLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  splitInfoTotalAmount: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: colors.primary,
+  },
+  splitPaymentCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    ...shadow.card,
+  },
+  splitAmountSection: {
+    marginBottom: spacing.md,
+  },
+  splitValidationMessage: {
+    marginTop: spacing.sm,
+  },
+  splitSummaryCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    marginTop: spacing.md,
+    ...shadow.card,
+  },
+  customerSummaryCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    ...shadow.card,
+  },
+  customerSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  customerSummaryLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  customerSummaryValue: {
+    fontSize: 14,
+    color: colors.textPrimary,
+  },
+  splitSummaryInline: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+  },
+  splitInlineText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginRight: spacing.xs,
+  },
+  splitInlineAmount: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  splitAmountInput: {
+    flex: 1,
+    marginLeft: spacing.md,
+  },
+  splitAmountTextInput: {
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    fontSize: 16,
+    color: colors.textPrimary,
+    backgroundColor: colors.background,
+  },
+  splitDescription: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+    textAlign: 'center',
+  },
+  splitPaymentRow: {
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.outline,
+  },
+  splitPaymentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  splitPaymentTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  splitPaymentInputs: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+  },
+  splitMethodSelect: {
+    flex: 1,
+  },
+  splitMethodButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  splitMethodButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    backgroundColor: colors.background,
+    minWidth: 80,
+    justifyContent: 'center',
+  },
+  splitMethodButtonSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  splitMethodButtonText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginLeft: spacing.xs,
+    fontWeight: '500',
+  },
+  splitMethodButtonTextSelected: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  splitInputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  splitSummarySection: {
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.outline,
+  },
+  splitTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.outline,
+  },
+  splitTotalLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  splitTotalAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  confirmSplitButton: {
+    backgroundColor: colors.primary,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  confirmSplitButtonDisabled: {
+    backgroundColor: colors.textMuted,
+  },
+  confirmSplitButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  addSplitPaymentButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary + '10',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginVertical: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderStyle: 'dashed',
+  },
+  addSplitPaymentButtonText: {
+    fontSize: 14,
+    color: colors.primary,
+    fontWeight: '600',
+    marginLeft: spacing.sm,
+  },
 });
 
 export default CustomerManagementScreen;
+

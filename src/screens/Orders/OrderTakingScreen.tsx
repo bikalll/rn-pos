@@ -28,6 +28,7 @@ interface RouteParams {
 const OrderTakingScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [footerHeight, setFooterHeight] = useState(0);
   
   const navigation = useNavigation();
   const route = useRoute();
@@ -215,7 +216,7 @@ const OrderTakingScreen: React.FC = () => {
         keyExtractor={(item) => item.id}
         style={styles.menuList}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: spacing.lg }}
+        contentContainerStyle={{ paddingBottom: spacing.lg + footerHeight }}
         ListEmptyComponent={() => (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No items found.</Text>
@@ -224,7 +225,10 @@ const OrderTakingScreen: React.FC = () => {
       />
 
       {order && order.items.length > 0 && (
-        <View style={[styles.footer, { paddingBottom: spacing.md + insets.bottom }] }>
+        <View 
+          style={[styles.footer, { paddingBottom: spacing.md + insets.bottom }] }
+          onLayout={({ nativeEvent }) => setFooterHeight(nativeEvent.layout.height)}
+        >
           <View style={styles.footerSummary}>
             <Text style={styles.footerSummaryText}>
               {selectedTable?.name || `Table ${selectedTableId.slice(-6)}`} • {totalItemsCount()} items
@@ -436,6 +440,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   footerSummary: {
     flexDirection: 'row',

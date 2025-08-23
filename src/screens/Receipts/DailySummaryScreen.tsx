@@ -31,6 +31,8 @@ interface ReceiptData {
   table: string;
   initial: string;
   paymentMethod: string;
+  // Optional breakdown for split payments
+  splitBreakdown?: Array<{ method: string; amount: number }>;
   time: string;
   date: string;
   timestamp: number; // Store actual timestamp for date calculations
@@ -98,14 +100,17 @@ export default function ReceiptsScreen() {
         return `R${month}${date}-${shortId}`;
       };
       
+      const isSplit = Array.isArray((payment as any).splitPayments) && (payment as any).splitPayments.length > 0;
+      const breakdown = isSplit ? (payment as any).splitPayments.map((sp: any) => ({ method: sp.method, amount: Number(sp.amount) || 0 })) : undefined;
       const receipt = {
         id: getShortReceiptId(order.id),
         orderId: order.id,
         amount: `Rs ${paymentAmount.toFixed(2)}`,
-        customer: payment.customerName || "Walk-in Customer",
+        customer: payment.customerName || payment.customerPhone || "Walk-in Customer",
         table: table?.name || order.tableId,
         initial: (payment.customerName || "W")[0].toUpperCase(),
-        paymentMethod: getPaymentMethodDisplay(payment.method),
+        paymentMethod: isSplit ? 'Split' : getPaymentMethodDisplay(payment.method),
+        splitBreakdown: breakdown,
         time: new Date(payment.timestamp).toLocaleTimeString('en-US', { 
           hour: '2-digit', 
           minute: '2-digit',
@@ -136,45 +141,37 @@ export default function ReceiptsScreen() {
     // Use filtered receipts based on date range
     const dateFilteredReceipts = filterReceiptsByDate(receipts, selectedSortOption);
 
-    const cashTotal = dateFilteredReceipts
-      .filter((receipt: ReceiptData) => receipt.paymentMethod === "Cash")
-      .reduce((sum: number, receipt: ReceiptData) => {
-        const amountStr = receipt.amount.replace('Rs ', '');
-        const amount = parseFloat(amountStr) || 0;
-        return sum + amount;
-      }, 0);
-
-    const cardTotal = dateFilteredReceipts
-      .filter((receipt: ReceiptData) => receipt.paymentMethod === "Card")
-      .reduce((sum: number, receipt: ReceiptData) => {
-        const amountStr = receipt.amount.replace('Rs ', '');
-        const amount = parseFloat(amountStr) || 0;
-        return sum + amount;
-      }, 0);
-
-    const bankTotal = dateFilteredReceipts
-      .filter((receipt: ReceiptData) => receipt.paymentMethod === "Bank")
-      .reduce((sum: number, receipt: ReceiptData) => {
-        const amountStr = receipt.amount.replace('Rs ', '');
-        const amount = parseFloat(amountStr) || 0;
-        return sum + amount;
-      }, 0);
-
-    const fpayTotal = dateFilteredReceipts
-      .filter((receipt: ReceiptData) => receipt.paymentMethod === "Fonepay")
-      .reduce((sum: number, receipt: ReceiptData) => {
-        const amountStr = receipt.amount.replace('Rs ', '');
-        const amount = parseFloat(amountStr) || 0;
-        return sum + amount;
-      }, 0);
-
-    const creditTotal = dateFilteredReceipts
-      .filter((receipt: ReceiptData) => receipt.paymentMethod === "Credit")
-      .reduce((sum: number, receipt: ReceiptData) => {
-        const amountStr = receipt.amount.replace('Rs ', '');
-        const amount = parseFloat(amountStr) || 0;
-        return sum + amount;
-      }, 0);
+    let cashTotal = 0, cardTotal = 0, bankTotal = 0, fpayTotal = 0, creditTotal = 0;
+    for (const r of dateFilteredReceipts) {
+      const order = ordersById[r.orderId];
+      const p = order?.payment as any;
+      if (!p) continue;
+      if (Array.isArray(p.splitPayments) && p.splitPayments.length > 0) {
+        for (const sp of p.splitPayments) {
+          const amt = Number(sp.amount) || 0;
+          switch (sp.method) {
+            case 'Cash': cashTotal += amt; break;
+            case 'Card':
+            case 'Bank Card': cardTotal += amt; break;
+            case 'Bank': bankTotal += amt; break;
+            case 'UPI':
+            case 'Fonepay': fpayTotal += amt; break;
+            case 'Credit': creditTotal += amt; break;
+          }
+        }
+      } else {
+        const amt = Number(p.amount) || 0;
+        switch (p.method) {
+          case 'Cash': cashTotal += amt; break;
+          case 'Card':
+          case 'Bank Card': cardTotal += amt; break;
+          case 'Bank': bankTotal += amt; break;
+          case 'UPI':
+          case 'Fonepay': fpayTotal += amt; break;
+          case 'Credit': creditTotal += amt; break;
+        }
+      }
+    }
 
     return [
       { label: "Cash", amount: `Rs ${cashTotal.toFixed(2)}`, icon: "wallet" as const, key: "Cash" },
@@ -183,7 +180,7 @@ export default function ReceiptsScreen() {
       { label: "Fonepay", amount: `Rs ${fpayTotal.toFixed(2)}`, icon: "cellphone" as const, key: "Fonepay" },
       { label: "Credit", amount: `Rs ${creditTotal.toFixed(2)}`, icon: "currency-usd" as const, key: "Credit" },
     ];
-  }, [receipts, selectedSortOption]);
+  }, [receipts, selectedSortOption, ordersById]);
 
   // Filter and search receipts
   const filteredReceipts = useMemo(() => {
@@ -194,7 +191,13 @@ export default function ReceiptsScreen() {
 
     // Filter by payment method
     if (selectedPaymentFilter) {
-      filtered = filtered.filter((receipt: ReceiptData) => receipt.paymentMethod === selectedPaymentFilter);
+      filtered = filtered.filter((receipt: ReceiptData) => {
+        if (receipt.paymentMethod === selectedPaymentFilter) return true;
+        if (receipt.paymentMethod === 'Split' && receipt.splitBreakdown) {
+          return receipt.splitBreakdown.some(b => b.method === selectedPaymentFilter || (selectedPaymentFilter === 'Card' && b.method === 'Bank Card') || (selectedPaymentFilter === 'Fonepay' && b.method === 'UPI'));
+        }
+        return false;
+      });
     }
 
     // Filter by search query
@@ -214,34 +217,31 @@ export default function ReceiptsScreen() {
   // Calculate filtered summary based on selected payment method
   const filteredSummary = useMemo(() => {
     if (!selectedPaymentFilter) {
-      // When no filter is applied, show the original summary with actual totals
       return summary;
     }
-    
-    // When filter is applied, show filtered totals but keep other methods visible
+    // Recompute selected method total including split portions
     const dateFilteredReceipts = filterReceiptsByDate(receipts, selectedSortOption);
-    const filteredReceiptsForSummary = dateFilteredReceipts.filter(receipt => 
-      receipt.paymentMethod === selectedPaymentFilter
-    );
-    
-    const totalAmount = filteredReceiptsForSummary.reduce((sum: number, receipt: ReceiptData) => {
-      const amountStr = receipt.amount.replace('Rs ', '');
-      const amount = parseFloat(amountStr) || 0;
-      return sum + amount;
-    }, 0);
-    
-    return summary.map(item => {
-      if (item.key === selectedPaymentFilter) {
-        return { ...item, amount: `Rs ${totalAmount.toFixed(2)}` };
+    let selectedTotal = 0;
+    for (const r of dateFilteredReceipts) {
+      const order = ordersById[r.orderId];
+      const p = order?.payment as any;
+      if (!p) continue;
+      if (Array.isArray(p.splitPayments) && p.splitPayments.length > 0) {
+        for (const sp of p.splitPayments) {
+          if (sp.method === selectedPaymentFilter) {
+            selectedTotal += Number(sp.amount) || 0;
+          }
+        }
+      } else if (p.method === selectedPaymentFilter || (selectedPaymentFilter === 'Card' && p.method === 'Bank Card') || (selectedPaymentFilter === 'Fonepay' && p.method === 'UPI')) {
+        selectedTotal += Number(p.amount) || 0;
       }
-      // Keep other payment methods visible with their original amounts
-      return item;
-    });
-  }, [selectedPaymentFilter, selectedSortOption, summary, receipts]);
+    }
+    return summary.map(item => item.key === selectedPaymentFilter ? { ...item, amount: `Rs ${selectedTotal.toFixed(2)}` } : item);
+  }, [selectedPaymentFilter, selectedSortOption, summary, receipts, ordersById]);
 
   const renderSummaryCard = (item: any, index: number) => (
     <TouchableOpacity
-      key={index}
+      key={`${item.key}-${index}`}
       style={{
         flex: 1,
         backgroundColor: selectedPaymentFilter === item.key ? "#333" : "#1e1e1e",
@@ -398,21 +398,66 @@ export default function ReceiptsScreen() {
           <Text style={{ color: "#fff", fontSize: 14 }}>Table: {item.table}</Text>
         </View>
         
-        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
-          <MaterialCommunityIcons name="credit-card" size={16} color="#aaa" style={{ marginRight: 8 }} />
-          <Text style={{ color: "#fff", fontSize: 14 }}>Paid: {item.amount} via </Text>
-          <View
-            style={{
-              backgroundColor: "#333",
-              paddingHorizontal: 8,
-              paddingVertical: 2,
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: "#555",
-            }}
-          >
-            <Text style={{ color: "#fff", fontSize: 12, fontWeight: "500" }}>{item.paymentMethod}</Text>
-          </View>
+        <View style={{ marginBottom: 12 }}>
+          {(() => {
+            // Compute display amount:
+            // - If filtering by a method and this is a split, show only that method's amount
+            // - Otherwise show net paid (amountPaid - change) to avoid showing tendered cash with change
+            let displayAmount = item.amount;
+            const order = ordersById[item.orderId];
+            const p: any = order?.payment;
+            if (selectedPaymentFilter && item.paymentMethod === 'Split' && item.splitBreakdown) {
+              const amt = item.splitBreakdown
+                .filter(b => b.method === selectedPaymentFilter || (selectedPaymentFilter === 'Card' && b.method === 'Bank Card') || (selectedPaymentFilter === 'Fonepay' && b.method === 'UPI'))
+                .reduce((s, b) => s + (Number(b.amount) || 0), 0);
+              displayAmount = `Rs ${amt.toFixed(2)}`;
+            } else if (p && item.paymentMethod === 'Split' && Array.isArray(p.splitPayments)) {
+              // Calculate total from order items
+              const orderSubtotal = order.items.reduce((sum: number, item: any) => sum + ((item.price || 0) * (item.quantity || 0)), 0);
+              const orderTax = orderSubtotal * ((order.taxPercentage || 0) / 100);
+              const orderServiceCharge = orderSubtotal * ((order.serviceChargePercentage || 0) / 100);
+              const orderDiscount = orderSubtotal * ((order.discountPercentage || 0) / 100);
+              const orderTotal = orderSubtotal + orderTax + orderServiceCharge - orderDiscount;
+              displayAmount = `Total: Rs ${orderTotal.toFixed(2)}`;
+            } else if (p && item.paymentMethod !== 'Split') {
+              const change = Number(p.change) || 0;
+              const paid = Number(p.amountPaid) || 0;
+              const netPaid = Math.max(0, paid - Math.max(0, change));
+              displayAmount = `Rs ${netPaid.toFixed(2)}`;
+            }
+            return (
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
+                <MaterialCommunityIcons name="credit-card" size={16} color="#aaa" style={{ marginRight: 8 }} />
+                <Text style={{ color: "#fff", fontSize: 14 }}>Paid: {displayAmount} via </Text>
+                <View
+                  style={{
+                    backgroundColor: "#333",
+                    paddingHorizontal: 8,
+                    paddingVertical: 2,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: "#555",
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontSize: 12, fontWeight: "500" }}>{item.paymentMethod}</Text>
+                </View>
+              </View>
+            );
+          })(          )}
+          {item.paymentMethod === 'Split' && item.splitBreakdown && (
+            <Text style={{ color: '#ccc', fontSize: 12, marginLeft: 24 }}>
+              {item.splitBreakdown.map(b => `${b.method}: Rs ${b.amount.toFixed(0)}`).join(' · ')}
+              {(() => {
+                const order = ordersById[item.orderId];
+                const p: any = order?.payment;
+                const change = Number(p?.change) || 0;
+                if (change > 0) {
+                  return ` · Change: Rs ${change.toFixed(0)}`;
+                }
+                return '';
+              })()}
+            </Text>
+          )}
         </View>
         
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>

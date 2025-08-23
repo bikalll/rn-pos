@@ -18,7 +18,8 @@ import { RootState } from '../../redux/store';
 import { PrintService } from '../../services/printing';
 import { blePrinter } from '../../services/blePrinter';
 import { removeItem, updateItemQuantity, markOrderSaved, snapshotSavedQuantities, cancelOrder, changeOrderTable, applyDiscount, setOrderCustomer } from '../../redux/slices/ordersSlice';
-import { addOrUpdateCustomer, updateCustomer, incrementVisitCount } from '../../redux/slices/customersSlice';
+// Removed direct customer mutations here; selection will use existing customers only
+import { unmergeTables } from '../../redux/slices/tablesSlice';
 import MergeTableModal from '../../components/MergeTableModal';
 import * as Sharing from 'expo-sharing';
 
@@ -38,8 +39,8 @@ const OrderConfirmationScreen: React.FC = () => {
   const [discountType, setDiscountType] = useState<'percentage' | 'amount'>('percentage');
   const [discountValue, setDiscountValue] = useState<string>('');
   const [assignCustomerModalVisible, setAssignCustomerModalVisible] = useState(false);
-  const [assignName, setAssignName] = useState('');
-  const [assignPhone, setAssignPhone] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   // Removed local saved state; rely on Redux flag directly
   
   const navigation = useNavigation();
@@ -160,18 +161,20 @@ const OrderConfirmationScreen: React.FC = () => {
 
   const handlePrintPreReceipt = async () => {
     const subtotal = orderWithOrderTypes.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
+    const discount = subtotal * ((orderWithOrderTypes.discountPercentage || 0) / 100);
+    const total = Math.max(0, subtotal - discount);
     const receipt = {
       receiptId: `PR${Date.now()}`,
       date: new Date(orderWithOrderTypes.createdAt).toLocaleDateString(),
       time: new Date(orderWithOrderTypes.createdAt).toLocaleTimeString(),
       tableNumber: actualTable?.name || orderWithOrderTypes.tableId,
-      customerName: 'Guest',
+      customerName: (order as any)?.customerName || (order as any)?.customerPhone || 'Guest',
       items: orderWithOrderTypes.items.map((i: any) => ({ name: i.name, quantity: i.quantity, price: i.price, total: i.price * i.quantity })),
       subtotal,
       tax: 0,
       serviceCharge: 0,
-      discount: 0,
-      total: subtotal,
+      discount,
+      total,
       paymentMethod: 'Pending',
       cashier: 'POS System',
     } as any;
@@ -184,8 +187,8 @@ const OrderConfirmationScreen: React.FC = () => {
     (navigation as any).navigate('Payment', { orderId, tableId, totalAmount: calculateTotal() });
   };
 
-  const renderOrderItem = (item: any) => (
-    <View key={item.menuItemId} style={styles.orderItem}>
+  const renderOrderItem = (item: any, index: number) => (
+    <View key={`${item.menuItemId}-${index}`} style={styles.orderItem}>
       <View style={styles.orderItemInfo}>
         <Text style={styles.orderItemName}>{item.name}</Text>
         <Text style={styles.orderItemPrice}>Rs {item.price.toFixed(2)}</Text>
@@ -236,7 +239,15 @@ const OrderConfirmationScreen: React.FC = () => {
                 <Text style={styles.optionsMenuText}>Merge Table</Text>
                 </TouchableOpacity>
               {/* Change Table */}
-              <TouchableOpacity style={styles.optionsMenuItem} onPress={() => { setShowOptionsMenu(false); setChangeTableModalVisible(true); }}>
+              <TouchableOpacity
+                style={[styles.optionsMenuItem, isMergedOrder && { opacity: 0.5 }]}
+                disabled={isMergedOrder}
+                onPress={() => {
+                  if (isMergedOrder) { Alert.alert('Unavailable', 'Cannot change table for merged orders.'); return; }
+                  setShowOptionsMenu(false);
+                  setChangeTableModalVisible(true);
+                }}
+              >
                 <Ionicons name="swap-horizontal" size={16} color={colors.textPrimary} />
                 <Text style={styles.optionsMenuText}>Change Table</Text>
                 </TouchableOpacity>
@@ -262,7 +273,17 @@ const OrderConfirmationScreen: React.FC = () => {
               <TouchableOpacity style={styles.optionsMenuItem} onPress={() => { 
                 Alert.alert('Cancel Order', 'Are you sure you want to cancel this order?', [
                   { text: 'No', style: 'cancel' },
-                  { text: 'Yes, Cancel', style: 'destructive', onPress: () => { try { (dispatch as any)(cancelOrder({ orderId })); } catch {} (navigation as any).navigate('Orders', { screen: 'OngoingOrders' }); } }
+                  { text: 'Yes, Cancel', style: 'destructive', onPress: () => { 
+                    try { 
+                      // If this was a merged order, unmerge the table so originals are reactivated
+                      const isMerged = !!order.isMergedOrder && !!tables[order.tableId]?.isMerged;
+                      if (isMerged) {
+                        (dispatch as any)(unmergeTables({ mergedTableId: order.tableId }));
+                      }
+                      (dispatch as any)(cancelOrder({ orderId })); 
+                    } catch {}
+                    (navigation as any).navigate('Orders', { screen: 'OngoingOrders' }); 
+                  } }
                 ]);
                 setShowOptionsMenu(false);
               }}>
@@ -272,7 +293,7 @@ const OrderConfirmationScreen: React.FC = () => {
             </View>
           )}
 
-          {orderWithOrderTypes.items.map(renderOrderItem)}
+          {orderWithOrderTypes.items.map((item: any, index: number) => renderOrderItem(item, index))}
 
           <View style={styles.divider} />
 
@@ -345,18 +366,20 @@ const OrderConfirmationScreen: React.FC = () => {
                   <TouchableOpacity style={styles.saveButton} onPress={async () => {
                     try {
                       const subtotal = orderWithOrderTypes.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
+                      const discount = subtotal * ((orderWithOrderTypes.discountPercentage || 0) / 100);
+                      const total = Math.max(0, subtotal - discount);
                       const receipt = {
                         receiptId: `PR${Date.now()}`,
                         date: new Date(orderWithOrderTypes.createdAt).toLocaleDateString(),
                         time: new Date(orderWithOrderTypes.createdAt).toLocaleTimeString(),
                         tableNumber: actualTable?.name || orderWithOrderTypes.tableId,
-                        customerName: 'Guest',
+                        customerName: (order as any)?.customerName || (order as any)?.customerPhone || 'Guest',
                         items: orderWithOrderTypes.items.map((i: any) => ({ name: i.name, quantity: i.quantity, price: i.price, total: i.price * i.quantity })),
                         subtotal,
                         tax: 0,
                         serviceCharge: 0,
-                        discount: 0,
-                        total: subtotal,
+                        discount,
+                        total,
                         paymentMethod: 'Pending',
                         cashier: 'POS System',
                       } as any;
@@ -392,10 +415,7 @@ const OrderConfirmationScreen: React.FC = () => {
                         estimatedTime: '20-30 minutes',
                         specialInstructions: orderWithOrderTypes.specialInstructions
                       };
-                      const saved = await PrintService.saveTicketAsFile(ticketData, 'COMBINED');
-                      if (saved.success && saved.fileUri && (await Sharing.isAvailableAsync())) {
-                        await Sharing.shareAsync(saved.fileUri, { mimeType: 'application/pdf', dialogTitle: 'Share Tickets' });
-                      }
+                      await PrintService.saveTicketAsFile(ticketData, 'COMBINED');
                       finalizeSave();
                       setPrintModalVisible(false);
                     } catch {
@@ -477,36 +497,75 @@ const OrderConfirmationScreen: React.FC = () => {
                 <Ionicons name="close" size={24} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
+            {/* Search */}
             <View style={{ marginBottom: spacing.md }}>
-              <Text style={styles.modalDescription}>Customer Name</Text>
-              <TextInput style={{ borderWidth: 1, borderColor: colors.outline, borderRadius: radius.md, padding: spacing.md, color: colors.textPrimary, backgroundColor: colors.background }} value={assignName} onChangeText={setAssignName} placeholder="e.g., John Doe" placeholderTextColor={colors.textSecondary} />
+              <Text style={styles.modalDescription}>Search Customers</Text>
+              <TextInput
+                style={{ borderWidth: 1, borderColor: colors.outline, borderRadius: radius.md, padding: spacing.md, color: colors.textPrimary, backgroundColor: colors.background }}
+                placeholder="Search by name or phone"
+                placeholderTextColor={colors.textSecondary}
+                value={customerSearch}
+                onChangeText={(t) => setCustomerSearch(t)}
+              />
             </View>
-            <View style={{ marginBottom: spacing.md }}>
-              <Text style={styles.modalDescription}>Customer Phone</Text>
-              <TextInput style={{ borderWidth: 1, borderColor: colors.outline, borderRadius: radius.md, padding: spacing.md, color: colors.textPrimary, backgroundColor: colors.background }} value={assignPhone} onChangeText={setAssignPhone} placeholder="e.g., 98XXXXXXXX" placeholderTextColor={colors.textSecondary} keyboardType="phone-pad" />
+            {/* Customer List */}
+            <View style={{ maxHeight: 280, marginBottom: spacing.md }}>
+              {Object.values(customersById as any).length === 0 ? (
+                <Text style={{ color: colors.textSecondary }}>No customers found. Add customers in the Customers section first.</Text>
+              ) : (
+                <ScrollView>
+                  {Object.values(customersById as any)
+                    .filter((c: any) => {
+                      const q = customerSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        (c.name || '').toLowerCase().includes(q) ||
+                        (c.phone || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map((c: any) => {
+                      const isSelected = selectedCustomerId === c.id;
+                      return (
+                        <TouchableOpacity
+                          key={c.id}
+                          onPress={() => setSelectedCustomerId(c.id)}
+                          style={{
+                            paddingVertical: spacing.sm,
+                            paddingHorizontal: spacing.md,
+                            borderRadius: radius.md,
+                            borderWidth: 1,
+                            borderColor: isSelected ? colors.primary : colors.outline,
+                            backgroundColor: isSelected ? colors.primary + '10' : colors.surface,
+                            marginBottom: spacing.xs,
+                          }}
+                        >
+                          <Text style={{ color: colors.textPrimary, fontWeight: '600' }}>{c.name || c.phone || 'Unnamed'}</Text>
+                          {!!c.phone && (
+                            <Text style={{ color: colors.textSecondary, marginTop: 2 }}>{c.phone}</Text>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                </ScrollView>
+              )}
             </View>
             <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.saveButton} onPress={() => {
-                const name = assignName.trim();
-                const phone = assignPhone.trim();
-                if (!name && !phone) { Alert.alert('Invalid', 'Enter name or phone'); return; }
-                try { (dispatch as any)(setOrderCustomer({ orderId, customerName: name || undefined, customerPhone: phone || undefined })); } catch {}
-                // Also upsert into customers store by phone if provided or by a generated id
-                try {
-                  const existingMatch = Object.values(customersById as any).find((c: any) => (phone && c.phone === phone) || (!phone && name && c.name?.toLowerCase() === name.toLowerCase()));
-                  if (existingMatch) {
-                    (dispatch as any)(updateCustomer({ id: (existingMatch as any).id, name: name || (existingMatch as any).name, phone: phone || (existingMatch as any).phone } as any));
-                    (dispatch as any)(incrementVisitCount((existingMatch as any).id));
-                  } else {
-                    const id = phone || `guest-${(order as any).id}`;
-                    (dispatch as any)(addOrUpdateCustomer({ id, name: name || 'Guest', phone: phone || undefined, createdAt: Date.now(), visitCount: 1 } as any));
-                  }
-                } catch {}
-                setAssignCustomerModalVisible(false);
-              }}>
+              <TouchableOpacity
+                style={[styles.saveButton, !selectedCustomerId && { opacity: 0.6 }]}
+                disabled={!selectedCustomerId}
+                onPress={() => {
+                  if (!selectedCustomerId) { return; }
+                  const customer = (customersById as any)[selectedCustomerId];
+                  if (!customer) { Alert.alert('Error', 'Customer not found'); return; }
+                  try { (dispatch as any)(setOrderCustomer({ orderId, customerName: customer.name, customerPhone: customer.phone })); } catch {}
+                  setAssignCustomerModalVisible(false);
+                  setCustomerSearch('');
+                  setSelectedCustomerId(null);
+                }}
+              >
                 <Text style={styles.saveButtonText}>Assign</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.cancelButton} onPress={() => setAssignCustomerModalVisible(false)}>
+              <TouchableOpacity style={styles.cancelButton} onPress={() => { setAssignCustomerModalVisible(false); setCustomerSearch(''); setSelectedCustomerId(null); }}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
             </View>

@@ -425,6 +425,58 @@ const MenuScreen: React.FC = () => {
     }
   };
 
+  const handleSaveTickets = async () => {
+    if (!pendingOrderInfo) return;
+    try {
+      setPrintModalVisible(false);
+
+      const order = ordersById[pendingOrderInfo.orderId];
+      const table = tablesById[pendingOrderInfo.tableId];
+      if (!order) {
+        showToast('Order not found', 'error');
+        return;
+      }
+
+      const savedQuantitiesLocal: Record<string, number> = (order as any)?.savedQuantities || {};
+      const itemsWithTypes = (order.items || []).map((i: any) => ({
+        ...i,
+        orderType: i.orderType || (menuItemsById as any)[i.menuItemId]?.orderType || 'KOT',
+      }));
+      const deltaItems = itemsWithTypes
+        .map((i: any) => ({ ...i, delta: i.quantity - (savedQuantitiesLocal[i.menuItemId] || 0) }))
+        .filter((i: any) => i.delta > 0)
+        .map((i: any) => ({ ...i, quantity: i.delta }));
+
+      if (deltaItems.length > 0) {
+        const ticketData = {
+          ticketId: `TKT-${Date.now()}`,
+          date: new Date(order.createdAt).toLocaleDateString(),
+          time: new Date(order.createdAt).toLocaleTimeString(),
+          table: table?.name || order.tableId,
+          items: deltaItems.map((item: any) => ({ name: item.name, quantity: item.quantity, price: item.price, orderType: item.orderType })),
+          estimatedTime: '20-30 minutes',
+          specialInstructions: (order as any).specialInstructions,
+        } as any;
+        await PrintService.saveTicketAsFile(ticketData, 'COMBINED');
+      }
+
+      (dispatch as any)(markOrderSaved({ orderId: pendingOrderInfo.orderId }));
+      (dispatch as any)(snapshotSavedQuantities({ orderId: pendingOrderInfo.orderId }));
+
+      navigation.navigate('Orders', { screen: 'OngoingOrders', params: { tableId: pendingOrderInfo.tableId } } as any);
+      setPendingOrderInfo(null);
+    } catch (error: any) {
+      console.error('Save tickets error:', error);
+      // Still mark saved so payment can proceed
+      if (pendingOrderInfo) {
+        (dispatch as any)(markOrderSaved({ orderId: pendingOrderInfo.orderId }));
+        (dispatch as any)(snapshotSavedQuantities({ orderId: pendingOrderInfo.orderId }));
+        navigation.navigate('Orders', { screen: 'OngoingOrders', params: { tableId: pendingOrderInfo.tableId } } as any);
+        setPendingOrderInfo(null);
+      }
+    }
+  };
+
   const handleCancelPrint = () => {
     setPrintModalVisible(false);
     if (pendingOrderInfo) {
@@ -760,12 +812,8 @@ const MenuScreen: React.FC = () => {
               <TouchableOpacity style={styles.printButton} onPress={handlePrint}>
                 <Text style={styles.printButtonText}>Print</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.cancelButton}
-                onPress={handleCancelPrint}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+              <TouchableOpacity style={styles.cancelButton} onPress={handleSaveTickets}>
+                <Text style={styles.cancelButtonText}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>

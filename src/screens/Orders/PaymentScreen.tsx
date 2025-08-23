@@ -15,7 +15,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, shadow } from '../../theme';
 import { RootState } from '../../redux/store';
-import { setPayment, completeOrder } from '../../redux/slices/ordersSlice';
+import { setPayment, completeOrder, setOrderCustomer } from '../../redux/slices/ordersSlice';
 import { addOrUpdateCustomer, incrementVisitCount, updateCustomer, updateCreditAmount } from '../../redux/slices/customersSlice';
 import { unmergeTables } from '../../redux/slices/tablesSlice';
 import { PaymentInfo, Customer, Order } from '../../utils/types';
@@ -45,6 +45,11 @@ const PaymentScreen: React.FC = () => {
   const [isSplitPayment, setIsSplitPayment] = useState(false);
   const [splitPaymentProcessed, setSplitPaymentProcessed] = useState(false);
   const createdCustomerIdRef = useRef<string | null>(null);
+  const [assignCustomerModalVisible, setAssignCustomerModalVisible] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [hasCompletedPayment, setHasCompletedPayment] = useState(false);
 
   const navigation = useNavigation();
   const route = useRoute();
@@ -54,13 +59,13 @@ const PaymentScreen: React.FC = () => {
   const order = useSelector((state: RootState) => state.orders.ordersById[orderId]) as Order;
   const customers = useSelector((state: RootState) => state.customers.customersById);
   const tables = useSelector((state: RootState) => state.tables.tablesById);
+  const assignedName = (order as any)?.customerName || '';
+  const assignedPhone = (order as any)?.customerPhone || '';
+  const hasAssignedCustomer = Boolean(assignedName || assignedPhone);
 
   useEffect(() => {
-    // Prefill from assigned customer on order, or from payment info if available
-    const assignedName = (order as any)?.customerName || order?.payment?.customerName || '';
-    const assignedPhone = (order as any)?.customerPhone || order?.payment?.customerPhone || '';
-    if (assignedName || assignedPhone) {
-      // Try match existing customer by phone first
+    // Prefill from assigned customer on order; hide form if already assigned
+    if (hasAssignedCustomer) {
       const byPhone = assignedPhone ? (Object.values(customers).find((c: any) => c.phone === assignedPhone) as Customer | undefined) : undefined;
       if (byPhone) {
         setExistingCustomer(byPhone);
@@ -70,9 +75,17 @@ const PaymentScreen: React.FC = () => {
         setCustomerName(assignedName);
         setCustomerPhone(assignedPhone);
       }
-      setShowCustomerForm(true);
+      setShowCustomerForm(false);
     }
-  }, [order, customers]);
+  }, [hasAssignedCustomer, assignedName, assignedPhone, customers]);
+
+  // Ensure split state is reverted when the split modal is dismissed without confirming
+  useEffect(() => {
+    if (!showSplitModal && !splitPaymentProcessed) {
+      setIsSplitPayment(false);
+      setSplitPayments([]);
+    }
+  }, [showSplitModal, splitPaymentProcessed]);
 
   // Auto-populate Customers list when either customer name or phone is provided during payment
   useEffect(() => {
@@ -112,10 +125,16 @@ const PaymentScreen: React.FC = () => {
       const currentId = createdCustomerIdRef.current;
       const current = currentId ? (customers as any)[currentId] as Customer | undefined : undefined;
       if (current) {
-        const payload: Partial<Customer> & { id: string } = { id: current.id } as any;
-        if (name) payload.name = name;
-        if (phone) payload.phone = phone;
-        dispatch(updateCustomer(payload));
+        const nextName = name || current.name;
+        const nextPhone = phone || current.phone;
+        const nameChanged = Boolean(name && current.name !== nextName);
+        const phoneChanged = Boolean(phone && current.phone !== nextPhone);
+        if (nameChanged || phoneChanged) {
+          const payload: Partial<Customer> & { id: string } = { id: current.id } as any;
+          if (nameChanged) payload.name = nextName;
+          if (phoneChanged) payload.phone = nextPhone;
+          dispatch(updateCustomer(payload));
+        }
       } else if (currentId) {
         // Fallback if not yet visible in state
         dispatch(addOrUpdateCustomer({ id: currentId, name: name || phone, phone: phone || undefined } as Customer));
@@ -123,8 +142,11 @@ const PaymentScreen: React.FC = () => {
     }
   }, [customerName, customerPhone, customers, dispatch]);
 
-  const handlePaymentMethodSelect = (method: PaymentInfo['method']) => {
+  const handlePaymentMethodSelect = (method: 'Cash' | 'Card' | 'UPI' | 'Bank Card' | 'Bank' | 'Fonepay' | 'Credit') => {
     setPaymentMethod(method);
+    if (method === 'Credit' && !hasAssignedCustomer) {
+      setAssignCustomerModalVisible(true);
+    }
   };
 
   const handleCustomerDataChange = () => {
@@ -168,9 +190,17 @@ const PaymentScreen: React.FC = () => {
     const newSplitPayments = [...splitPayments];
     newSplitPayments[index] = { ...newSplitPayments[index], [field]: value };
     
-    // If updating amount, also update amountPaid
+    // Keep number and string in sync; allow typing '.' by preserving string
+    if (field === 'amountPaid') {
+      const parsed = parseFloat(value);
+      newSplitPayments[index].amount = isNaN(parsed) ? 0 : parsed;
+    }
     if (field === 'amount') {
       newSplitPayments[index].amountPaid = value.toString();
+    }
+    // If switching method to Credit and there is no assigned customer yet, prompt to assign one
+    if (field === 'method' && value === 'Credit' && !hasAssignedCustomer) {
+      setAssignCustomerModalVisible(true);
     }
     
     setSplitPayments(newSplitPayments);
@@ -189,10 +219,14 @@ const PaymentScreen: React.FC = () => {
 
   const validateSplitPayments = () => {
     const splitTotal = getSplitTotal();
-    return Math.abs(splitTotal - totalAmount) < 0.01;
+    return Math.abs(splitTotal - totalAmount) < 0.01; // must equal exactly (within epsilon)
   };
 
   const handleConfirmSplit = () => {
+    if (!validateSplitPayments()) {
+      Alert.alert('Split Total Mismatch', 'Split total must equal the order total exactly.');
+      return;
+    }
     // If only one payment method, treat it as normal payment
     if (splitPayments.length === 1) {
       setIsSplitPayment(false);
@@ -206,45 +240,90 @@ const PaymentScreen: React.FC = () => {
     setShowSplitModal(false);
   };
 
+  const handleCloseSplitModal = () => {
+    // Exit split mode fully when closing via X
+    setShowSplitModal(false);
+    setIsSplitPayment(false);
+    setSplitPaymentProcessed(false);
+    setSplitPayments([]);
+  };
+
+  const handleRemoveCustomer = () => {
+    // Check if there are any credit payments in the split
+    const hasCreditInSplit = splitPayments.some((sp) => sp.method === 'Credit');
+    
+    if (hasCreditInSplit) {
+      Alert.alert(
+        'Cannot Remove Customer',
+        'Customer cannot be removed while credit payments are present in the split. Please change all credit payments to other methods first.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    // Allow removal only if no credit payments
+    try { 
+      dispatch(setOrderCustomer({ orderId, customerName: undefined, customerPhone: undefined }) as any); 
+    } catch (error) {
+      console.error('Error removing customer:', error);
+    }
+  };
+
   const handleProcessPayment = () => {
+    if (isProcessingPayment || hasCompletedPayment) return;
+    setIsProcessingPayment(true);
     if (isSplitPayment) {
-      // Handle split payment - no validation needed
+      if (!validateSplitPayments()) {
+        setIsProcessingPayment(false);
+        Alert.alert('Split Total Mismatch', 'Allocate the full amount across split payments before processing.');
+        return;
+      }
       processSplitPayments();
     } else {
-      // Handle single payment - always allow processing
+      // Handle single payment - fixed to exact total
       processSinglePayment(totalAmount);
     }
   };
 
   const processSinglePayment = (amount: number) => {
-    // Create or update customer if details are provided (for Credit, require at least name or phone)
+    // Create or update customer if details are provided (for Credit, require customer NAME)
     let customerId: string | undefined;
     const nameTrim = customerName.trim();
     const phoneTrim = customerPhone.trim();
-    const requiresCustomer = paymentMethod === 'Credit';
+    const requiresCustomerName = paymentMethod === 'Credit';
 
-    if (requiresCustomer && !nameTrim && !phoneTrim) {
-      Alert.alert('Customer Required', 'Enter customer name or phone to assign credit.');
+    if (requiresCustomerName && !nameTrim) {
+      Alert.alert('Customer Required', 'Enter customer name to assign credit.');
       return;
     }
 
     if (nameTrim || phoneTrim) {
-      let existingCustomer: Customer | undefined;
-      if (phoneTrim) {
-        existingCustomer = Object.values(customers).find((c: any) => c.phone === phoneTrim) as Customer | undefined;
+      // Prefer existing by phone
+      let existingCustomer: Customer | undefined = phoneTrim
+        ? (Object.values(customers).find((c: any) => c.phone === phoneTrim) as Customer | undefined)
+        : undefined;
+
+      // Or previously created in this session via typing
+      if (!existingCustomer && createdCustomerIdRef.current) {
+        const existingByRef = (customers as any)[createdCustomerIdRef.current] as Customer | undefined;
+        if (existingByRef) existingCustomer = existingByRef;
       }
 
       if (existingCustomer) {
         dispatch(incrementVisitCount(existingCustomer.id));
-        // Update name if changed
         if (nameTrim && existingCustomer.name !== nameTrim) {
           dispatch(updateCustomer({ id: existingCustomer.id, name: nameTrim }));
         }
+        if (phoneTrim && existingCustomer.phone !== phoneTrim) {
+          dispatch(updateCustomer({ id: existingCustomer.id, phone: phoneTrim } as any));
+        }
         customerId = existingCustomer.id;
       } else {
-        // Create new minimal customer record
+        // Create or reuse typed customer id
+        const id = createdCustomerIdRef.current || `CUST-${Date.now()}`;
+        createdCustomerIdRef.current = id;
         const newCustomer: Customer = {
-          id: `CUST-${Date.now()}`,
+          id,
           name: nameTrim || phoneTrim,
           phone: phoneTrim || undefined,
           visitCount: 1,
@@ -254,7 +333,7 @@ const PaymentScreen: React.FC = () => {
           loyaltyPoints: 0,
         };
         dispatch(addOrUpdateCustomer(newCustomer));
-        customerId = newCustomer.id;
+        customerId = id;
       }
     }
 
@@ -264,7 +343,7 @@ const PaymentScreen: React.FC = () => {
       method: paymentMethod,
       amount: totalAmount,
       amountPaid: amount,
-      change: amount - totalAmount,
+      change: 0,
       customerName: displayName,
       customerPhone: phoneTrim || '',
       timestamp: Date.now(),
@@ -295,13 +374,14 @@ const PaymentScreen: React.FC = () => {
 
     Alert.alert(
       'Payment Successful',
-      `Payment processed successfully!\nChange: Rs. ${(amount - totalAmount).toFixed(2)}`,
+      'Payment processed successfully!',
       [
         {
           text: 'Done',
           onPress: () => {
-            // Navigate back to tables dashboard directly
             (navigation as any).navigate('Dashboard', { screen: 'TablesDashboard' });
+            setIsProcessingPayment(false);
+            setHasCompletedPayment(true);
           },
         },
         {
@@ -310,6 +390,8 @@ const PaymentScreen: React.FC = () => {
             // Print receipt again and then navigate
             printReceipt(paymentInfo);
             (navigation as any).navigate('Dashboard', { screen: 'TablesDashboard' });
+            setIsProcessingPayment(false);
+            setHasCompletedPayment(true);
           },
         },
       ]
@@ -325,25 +407,55 @@ const PaymentScreen: React.FC = () => {
       .filter((sp) => sp.method === 'Credit')
       .reduce((sum, sp) => sum + (typeof sp.amount === 'number' ? sp.amount : parseFloat(sp.amountPaid) || 0), 0);
 
-    if (creditPortion > 0 && !nameTrim && !phoneTrim) {
-      Alert.alert('Customer Required', 'Enter customer name or phone to assign credit.');
+    if (creditPortion > 0 && !hasAssignedCustomer) {
+      Alert.alert('Customer Required', 'A customer must be assigned when processing credit payments.');
       return;
     }
 
-    if (nameTrim || phoneTrim) {
-      let existingCustomer: Customer | undefined;
-      if (phoneTrim) {
-        existingCustomer = Object.values(customers).find((c: any) => c.phone === phoneTrim) as Customer | undefined;
+    if (hasAssignedCustomer) {
+      // Use the assigned customer
+      const byPhone = assignedPhone ? (Object.values(customers).find((c: any) => c.phone === assignedPhone) as Customer | undefined) : undefined;
+      if (byPhone) {
+        customerId = byPhone.id;
+        dispatch(incrementVisitCount(byPhone.id));
+      } else {
+        // Create customer record for the assigned customer
+        const id = `CUST-${Date.now()}`;
+        const newCustomer: Customer = {
+          id,
+          name: assignedName || 'Customer',
+          phone: assignedPhone || undefined,
+          visitCount: 1,
+          createdAt: Date.now(),
+          lastVisit: Date.now(),
+          creditAmount: 0,
+          loyaltyPoints: 0,
+        };
+        dispatch(addOrUpdateCustomer(newCustomer));
+        customerId = id;
+      }
+    } else if (nameTrim || phoneTrim) {
+      let existingCustomer: Customer | undefined = phoneTrim
+        ? (Object.values(customers).find((c: any) => c.phone === phoneTrim) as Customer | undefined)
+        : undefined;
+      if (!existingCustomer && createdCustomerIdRef.current) {
+        const byRef = (customers as any)[createdCustomerIdRef.current] as Customer | undefined;
+        if (byRef) existingCustomer = byRef;
       }
       if (existingCustomer) {
         dispatch(incrementVisitCount(existingCustomer.id));
         if (nameTrim && existingCustomer.name !== nameTrim) {
           dispatch(updateCustomer({ id: existingCustomer.id, name: nameTrim }));
         }
+        if (phoneTrim && existingCustomer.phone !== phoneTrim) {
+          dispatch(updateCustomer({ id: existingCustomer.id, phone: phoneTrim } as any));
+        }
         customerId = existingCustomer.id;
       } else {
+        const id = createdCustomerIdRef.current || `CUST-${Date.now()}`;
+        createdCustomerIdRef.current = id;
         const newCustomer: Customer = {
-          id: `CUST-${Date.now()}`,
+          id,
           name: nameTrim || phoneTrim,
           phone: phoneTrim || undefined,
           visitCount: 1,
@@ -353,21 +465,31 @@ const PaymentScreen: React.FC = () => {
           loyaltyPoints: 0,
         };
         dispatch(addOrUpdateCustomer(newCustomer));
-        customerId = newCustomer.id;
+        customerId = id;
       }
     }
 
-    // Create combined payment info
-    const displayName = nameTrim || phoneTrim || '';
+    // Create combined payment info with enhanced split payment details
+    const displayName = hasAssignedCustomer ? (assignedName || assignedPhone || '') : (nameTrim || phoneTrim || '');
+    const splitSum = getSplitTotal();
+    const cashPortion = splitPayments
+      .filter((sp) => sp.method !== 'Credit')
+      .reduce((sum, sp) => sum + (typeof sp.amount === 'number' ? sp.amount : parseFloat(sp.amountPaid) || 0), 0);
+    
     const paymentInfo: any = {
-      method: 'Credit',
-      amount: totalAmount,
-      amountPaid: totalAmount,
+      method: 'Split',
+      amount: totalAmount, // This is the order total amount
+      amountPaid: cashPortion, // Only count non-credit payments as "paid"
       change: 0,
       customerName: displayName,
-      customerPhone: phoneTrim || '',
+      customerPhone: hasAssignedCustomer ? assignedPhone : phoneTrim || '',
       timestamp: Date.now(),
-      splitPayments: splitPayments,
+      splitPayments: splitPayments.map(sp => ({ method: sp.method, amount: sp.amount })),
+      // Add credit-specific information
+      creditAmount: creditPortion,
+      totalPaid: cashPortion,
+      // Add total split amount for reference
+      totalSplitAmount: splitSum,
     };
 
     // Set payment
@@ -401,21 +523,23 @@ const PaymentScreen: React.FC = () => {
       'Payment Successful',
       'Payment processed successfully with multiple payment methods!',
       [
-                 {
-           text: 'Done',
-           onPress: () => {
-             // Navigate back to tables dashboard directly
-             (navigation as any).navigate('Dashboard', { screen: 'TablesDashboard' });
-           },
-         },
-         {
-           text: 'Print & Done',
-           onPress: () => {
-             // Print receipt again and then navigate
-             printReceipt(paymentInfo);
-             (navigation as any).navigate('Dashboard', { screen: 'TablesDashboard' });
-           },
-         },
+        {
+          text: 'Done',
+          onPress: () => {
+            (navigation as any).navigate('Dashboard', { screen: 'TablesDashboard' });
+            setIsProcessingPayment(false);
+            setHasCompletedPayment(true);
+          },
+        },
+        {
+          text: 'Print & Done',
+          onPress: () => {
+            printReceipt(paymentInfo);
+            (navigation as any).navigate('Dashboard', { screen: 'TablesDashboard' });
+            setIsProcessingPayment(false);
+            setHasCompletedPayment(true);
+          },
+        },
       ]
     );
   };
@@ -440,17 +564,9 @@ const PaymentScreen: React.FC = () => {
     }
   };
 
-  const calculateChange = () => {
-    const amount = parseFloat(amountPaid);
-    if (isNaN(amount)) return 0;
-    return Math.max(0, amount - totalAmount);
-  };
+  // Change is not supported; amounts must equal total exactly
 
-  const calculateSplitChange = () => {
-    if (!isSplitPayment) return 0;
-    const splitTotal = getSplitTotal();
-    return Math.max(0, splitTotal - totalAmount);
-  };
+  const hasCreditInSplit = splitPayments.some((sp) => sp.method === 'Credit');
 
   const paymentMethods = [
     { method: 'Cash' as const, icon: 'cash-outline', label: 'Cash' },
@@ -488,8 +604,8 @@ const PaymentScreen: React.FC = () => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Order Items</Text>
           <View style={styles.itemsCard}>
-            {order.items.map((item: any) => (
-              <View key={item.menuItemId} style={styles.itemRow}>
+            {order.items.map((item: any, index: number) => (
+              <View key={`${item.menuItemId}-${index}`} style={styles.itemRow}>
                 <View style={styles.itemInfo}>
                   <Text style={styles.itemName}>{item.name}</Text>
                   <Text style={styles.itemQuantity}>x{item.quantity}</Text>
@@ -540,53 +656,50 @@ const PaymentScreen: React.FC = () => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Customer Information</Text>
-            <TouchableOpacity onPress={handleCustomerDataChange}>
-              <Ionicons name="create-outline" size={20} color={colors.primary} />
-            </TouchableOpacity>
+            {!hasAssignedCustomer && (
+              <TouchableOpacity onPress={() => setAssignCustomerModalVisible(true)}>
+                <Ionicons name="person-add-outline" size={20} color={colors.primary} />
+              </TouchableOpacity>
+            )}
           </View>
-          
-          {showCustomerForm ? (
-            <View style={styles.customerForm}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Customer Name</Text>
-                <TextInput
-                  style={styles.input}
-                  value={customerName}
-                  onChangeText={setCustomerName}
-                  placeholder="Enter customer name"
-                  placeholderTextColor={colors.textSecondary}
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Phone Number</Text>
-                <TextInput
-                  style={styles.input}
-                  value={customerPhone}
-                  onChangeText={setCustomerPhone}
-                  placeholder="Enter phone number"
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="phone-pad"
-                />
-              </View>
 
-              {existingCustomer && (
-                <View style={styles.existingCustomerInfo}>
-                  <Ionicons name="information-circle-outline" size={16} color={colors.info} />
-                  <Text style={styles.existingCustomerText}>
-                    Existing customer: {existingCustomer.visitCount || 0} visits
+          {hasAssignedCustomer ? (
+            <View style={styles.customerForm}>
+              <View style={[styles.inputGroup, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+                <View>
+                  <Text style={styles.inputLabel}>Assigned Customer</Text>
+                  <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: '600' }}>
+                    {assignedName || 'Customer'}{assignedPhone ? ` (${assignedPhone})` : ''}
                   </Text>
                 </View>
-              )}
+                <TouchableOpacity 
+                  onPress={handleRemoveCustomer}
+                  style={{ 
+                    paddingVertical: spacing.xs, 
+                    paddingHorizontal: spacing.md, 
+                    borderRadius: radius.md, 
+                    borderWidth: 1, 
+                    borderColor: colors.outline, 
+                    backgroundColor: colors.surface2 
+                  }}
+                >
+                  <Text style={{ color: colors.textPrimary, fontWeight: '600' }}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+                Customer was assigned in Order Confirmation
+              </Text>
             </View>
           ) : (
-            <TouchableOpacity 
-              style={styles.addCustomerButton}
-              onPress={() => setShowCustomerForm(true)}
-            >
-              <Ionicons name="person-add-outline" size={20} color={colors.primary} />
-              <Text style={styles.addCustomerButtonText}>Add Customer Information</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity 
+                style={styles.addCustomerButton}
+                onPress={() => setAssignCustomerModalVisible(true)}
+              >
+                <Ionicons name="person-add-outline" size={20} color={colors.primary} />
+                <Text style={styles.addCustomerButtonText}>Assign Customer</Text>
+              </TouchableOpacity>
+            </>
           )}
         </View>
 
@@ -596,7 +709,7 @@ const PaymentScreen: React.FC = () => {
             <Text style={styles.sectionTitle}>Split Payment Details</Text>
             <View style={styles.splitInfoCard}>
               {splitPayments.map((payment, index) => (
-                <View key={index} style={styles.splitInfoRow}>
+                <View key={`split-info-${payment.method}-${payment.amount}-${index}`} style={styles.splitInfoRow}>
                   <View style={styles.splitInfoLeft}>
                     <Text style={styles.splitInfoLabel}>Payment {index + 1}</Text>
                     <Text style={styles.splitInfoMethod}>{payment.method}</Text>
@@ -634,11 +747,6 @@ const PaymentScreen: React.FC = () => {
                   <Text style={styles.fixedAmountText}>Rs. {totalAmount.toFixed(2)}</Text>
                 </View>
               </View>
-              
-              <View style={styles.changeRow}>
-                <Text style={styles.changeLabel}>Change:</Text>
-                <Text style={styles.changeAmount}>Rs. {calculateChange().toFixed(2)}</Text>
-              </View>
             </View>
           </View>
         )}
@@ -654,19 +762,15 @@ const PaymentScreen: React.FC = () => {
                   <Text style={styles.fixedAmountText}>Rs. {totalAmount.toFixed(2)}</Text>
                 </View>
               </View>
-              
-              <View style={styles.changeRow}>
-                <Text style={styles.changeLabel}>Change:</Text>
-                <Text style={styles.changeAmount}>Rs. {calculateSplitChange().toFixed(2)}</Text>
-              </View>
             </View>
           </View>
         )}
 
         {/* Process Payment Button */}
         <TouchableOpacity
-          style={styles.processPaymentButton}
+          style={[styles.processPaymentButton, (isProcessingPayment || hasCompletedPayment) && styles.processPaymentButtonDisabled]}
           onPress={handleProcessPayment}
+          disabled={isProcessingPayment || hasCompletedPayment}
         >
           <Ionicons name="checkmark-circle-outline" size={24} color="white" />
           <Text style={styles.processPaymentButtonText}>
@@ -675,18 +779,105 @@ const PaymentScreen: React.FC = () => {
         </TouchableOpacity>
       </ScrollView>
 
+      {/* Assign Customer Modal */}
+      <Modal
+        visible={assignCustomerModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setAssignCustomerModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Assign Customer</Text>
+              <TouchableOpacity onPress={() => setAssignCustomerModalVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ padding: spacing.md }}>
+              <Text style={styles.modalDescription}>Search Customers</Text>
+              <TextInput
+                style={{ borderWidth: 1, borderColor: colors.outline, borderRadius: radius.md, padding: spacing.md, color: colors.textPrimary, backgroundColor: colors.background, marginBottom: spacing.md }}
+                placeholder="Search by name or phone"
+                placeholderTextColor={colors.textSecondary}
+                value={customerSearch}
+                onChangeText={setCustomerSearch}
+              />
+              <View style={{ maxHeight: 320 }}>
+                {Object.values(customers as any).length === 0 ? (
+                  <Text style={{ color: colors.textSecondary }}>No customers found. Add customers in the Customers section first.</Text>
+                ) : (
+                  Object.values(customers as any)
+                    .filter((c: any) => {
+                      const q = customerSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        (c.name || '').toLowerCase().includes(q) ||
+                        (c.phone || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map((c: any) => {
+                      const isSelected = selectedCustomerId === c.id;
+                      return (
+                        <TouchableOpacity
+                          key={c.id}
+                          onPress={() => setSelectedCustomerId(c.id)}
+                          style={{
+                            paddingVertical: spacing.sm,
+                            paddingHorizontal: spacing.md,
+                            borderRadius: radius.md,
+                            borderWidth: 1,
+                            borderColor: isSelected ? colors.primary : colors.outline,
+                            backgroundColor: isSelected ? colors.primary + '10' : colors.surface,
+                            marginBottom: spacing.xs,
+                          }}
+                        >
+                          <Text style={{ color: colors.textPrimary, fontWeight: '600' }}>{c.name || c.phone || 'Unnamed'}</Text>
+                          {!!c.phone && (
+                            <Text style={{ color: colors.textSecondary, marginTop: 2 }}>{c.phone}</Text>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })
+                )}
+              </View>
+            </ScrollView>
+            <View style={{ padding: spacing.md }}>
+              <TouchableOpacity
+                style={[styles.primaryActionButton, !selectedCustomerId && { opacity: 0.6 }]}
+                disabled={!selectedCustomerId}
+                onPress={() => {
+                  if (!selectedCustomerId) return;
+                  const customer: any = (customers as any)[selectedCustomerId];
+                  if (!customer) { Alert.alert('Error', 'Customer not found'); return; }
+                  try { dispatch(setOrderCustomer({ orderId, customerName: customer.name, customerPhone: customer.phone }) as any); } catch {}
+                  setAssignCustomerModalVisible(false);
+                  setCustomerSearch('');
+                  setSelectedCustomerId(null);
+                }}
+              >
+                <Text style={styles.primaryActionButtonText}>Assign</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryActionButton} onPress={() => { setAssignCustomerModalVisible(false); setCustomerSearch(''); setSelectedCustomerId(null); }}>
+                <Text style={styles.secondaryActionButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Split Payment Modal */}
       <Modal
         visible={showSplitModal}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => setShowSplitModal(false)}
+        onRequestClose={handleCloseSplitModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Split Bill</Text>
-              <TouchableOpacity onPress={() => setShowSplitModal(false)}>
+              <TouchableOpacity onPress={handleCloseSplitModal}>
                 <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -699,9 +890,26 @@ const PaymentScreen: React.FC = () => {
               <Text style={styles.splitDescription}>
                 Split the bill into multiple payment methods. Total: Rs. {totalAmount.toFixed(2)}
               </Text>
+              {hasCreditInSplit && (
+                <View style={{ marginBottom: spacing.md }}>
+                  {hasAssignedCustomer ? (
+                    <Text style={{ color: colors.textSecondary, textAlign: 'center' }}>
+                      Credit portion will be assigned to: {assignedName || assignedPhone}
+                    </Text>
+                  ) : (
+                    <TouchableOpacity
+                      style={[styles.addCustomerButton, { marginTop: spacing.sm }]}
+                      onPress={() => setAssignCustomerModalVisible(true)}
+                    >
+                      <Ionicons name="person-add-outline" size={20} color={colors.primary} />
+                      <Text style={styles.addCustomerButtonText}>Assign Customer for Credit</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
               
               {splitPayments.map((payment, index) => (
-                <View key={index} style={styles.splitPaymentRow}>
+                <View key={`split-payment-row-${payment.method}-${payment.amount}-${index}`} style={styles.splitPaymentRow}>
                   <View style={styles.splitPaymentHeader}>
                     <Text style={styles.splitPaymentTitle}>Payment {index + 1}</Text>
                     {splitPayments.length > 1 && (
@@ -742,10 +950,9 @@ const PaymentScreen: React.FC = () => {
                         style={styles.splitAmountTextInput}
                         value={payment.amountPaid}
                         onChangeText={(value) => {
-                          const numValue = parseFloat(value) || 0;
-                          updateSplitPayment(index, 'amount', numValue);
+                          updateSplitPayment(index, 'amountPaid', value);
                         }}
-                        keyboardType="numeric"
+                        keyboardType="decimal-pad"
                         placeholder="0.00"
                         placeholderTextColor={colors.textSecondary}
                       />
@@ -768,20 +975,22 @@ const PaymentScreen: React.FC = () => {
                     Rs. {getSplitTotal().toFixed(2)}
                   </Text>
                 </View>
-                
-                <View style={styles.splitChangeRow}>
-                  <Text style={styles.splitChangeLabel}>Change:</Text>
-                  <Text style={[styles.splitChangeAmount, { 
-                    color: getSplitTotal() > totalAmount ? colors.success : colors.textSecondary 
-                  }]}>
-                    Rs. {Math.max(0, getSplitTotal() - totalAmount).toFixed(2)}
+                {Math.abs(getSplitTotal() - totalAmount) >= 0.01 && (
+                  <Text style={{ color: colors.danger, textAlign: 'center', marginTop: spacing.sm }}>
+                    {getSplitTotal() < totalAmount
+                      ? `Remaining to allocate: Rs. ${(totalAmount - getSplitTotal()).toFixed(2)}`
+                      : `Excess amount: Rs. ${(getSplitTotal() - totalAmount).toFixed(2)}`}
                   </Text>
-                </View>
+                )}
               </View>
               
               <TouchableOpacity
-                style={styles.confirmSplitButton}
+                style={[
+                  styles.confirmSplitButton,
+                  ((hasCreditInSplit && !hasAssignedCustomer) || !validateSplitPayments()) && styles.confirmSplitButtonDisabled,
+                ]}
                 onPress={handleConfirmSplit}
+                disabled={(hasCreditInSplit && !hasAssignedCustomer) || !validateSplitPayments()}
               >
                 <Text style={styles.confirmSplitButtonText}>Proceed Payment</Text>
               </TouchableOpacity>
@@ -1091,6 +1300,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: colors.textPrimary,
   },
+  modalDescription: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
   splitModalContent: {
     padding: spacing.lg,
   },
@@ -1237,6 +1451,31 @@ const styles = StyleSheet.create({
   },
   confirmSplitButtonText: {
     color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  primaryActionButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  primaryActionButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  secondaryActionButton: {
+    backgroundColor: colors.surface2,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+  },
+  secondaryActionButtonText: {
+    color: colors.textPrimary,
     fontSize: 16,
     fontWeight: '600',
   },

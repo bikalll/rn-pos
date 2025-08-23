@@ -9,6 +9,7 @@ import {
   Alert,
   Modal,
   TextInput,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,16 +43,30 @@ const TablesDashboardScreen: React.FC = () => {
   const ongoingOrderIds = useSelector((state: RootState) => state.orders.ongoingOrderIds || []);
   const ordersById = useSelector((state: RootState) => state.orders.ordersById || {});
   const activeTables = useSelector(selectActiveTables);
+  const customers = useSelector((state: RootState) => (state as any).customers?.customersById || {});
   const dispatch = useDispatch();
 
   // Reservation modal state
   const [reservationModalVisible, setReservationModalVisible] = useState(false);
   const [reservationTargetTableId, setReservationTargetTableId] = useState<string | null>(null);
+  const [resNote, setResNote] = useState<string>('');
   const [resHour, setResHour] = useState<string>('');
   const [resMinute, setResMinute] = useState<string>('');
   const [resAmPm, setResAmPm] = useState<'AM' | 'PM'>('PM');
   const [resDayOffset, setResDayOffset] = useState<0 | 1>(0); // 0: Today, 1: Tomorrow
   const [nowTs, setNowTs] = useState<number>(Date.now());
+
+  // Customer selection for reservation
+  const [customerSearchRes, setCustomerSearchRes] = useState<string>('');
+  const [selectedCustomerIdRes, setSelectedCustomerIdRes] = useState<string | null>(null);
+
+  // Reservation details modal
+  const [detailsModalVisible, setDetailsModalVisible] = useState(false);
+  const [detailsTableId, setDetailsTableId] = useState<string | null>(null);
+
+  // Themed actions modal for long-press on reserved table
+  const [actionsModalVisible, setActionsModalVisible] = useState(false);
+  const [actionsTableId, setActionsTableId] = useState<string | null>(null);
 
   useEffect(() => {
     // Use active tables from Redux store, fallback to mock tables if none exist
@@ -115,6 +130,9 @@ const TablesDashboardScreen: React.FC = () => {
 
   const openReservationModal = (table: Table) => {
     setReservationTargetTableId(table.id);
+    setResNote('');
+    setCustomerSearchRes('');
+    setSelectedCustomerIdRes(null);
     // Default to next 30-min slot today
     const now = new Date();
     let minutes = now.getMinutes();
@@ -135,14 +153,8 @@ const TablesDashboardScreen: React.FC = () => {
   const handleLongPress = (table: Table) => {
     const name = activeTables.find(t => t.id === table.id)?.name || `Table ${table.number}`;
     if (table.status === 'reserved') {
-      Alert.alert(
-        'Unreserve Table',
-        `Remove reservation for ${name}?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Unreserve', style: 'destructive', onPress: () => dispatch(unreserveTable({ id: table.id })) },
-        ]
-      );
+      setActionsTableId(table.id);
+      setActionsModalVisible(true);
     } else if (table.status === 'available') {
       openReservationModal(table);
     } else if (table.status === 'occupied') {
@@ -154,6 +166,12 @@ const TablesDashboardScreen: React.FC = () => {
 
   const confirmReservation = () => {
     if (!reservationTargetTableId) return;
+    if (!selectedCustomerIdRes) {
+      Alert.alert('Select Customer', 'Please choose a customer for this reservation.');
+      return;
+    }
+    const selectedCustomer: any = (customers as any)[selectedCustomerIdRes];
+    const nameTrimmed = (selectedCustomer?.name || selectedCustomer?.phone || '').trim();
     const hourNum = parseInt(resHour, 10);
     const minuteNum = parseInt(resMinute, 10);
     if (isNaN(hourNum) || isNaN(minuteNum) || hourNum < 1 || hourNum > 12 || minuteNum < 0 || minuteNum > 59) {
@@ -169,7 +187,7 @@ const TablesDashboardScreen: React.FC = () => {
       Alert.alert('Invalid Time', 'Please choose a future time.');
       return;
     }
-    dispatch(reserveTable({ id: reservationTargetTableId, reservedUntil: ts }));
+    dispatch(reserveTable({ id: reservationTargetTableId, reservedBy: nameTrimmed, reservedNote: resNote.trim() || undefined, reservedUntil: ts }));
     setReservationModalVisible(false);
     setReservationTargetTableId(null);
   };
@@ -177,6 +195,9 @@ const TablesDashboardScreen: React.FC = () => {
   const cancelReservationModal = () => {
     setReservationModalVisible(false);
     setReservationTargetTableId(null);
+    setResNote('');
+    setCustomerSearchRes('');
+    setSelectedCustomerIdRes(null);
   };
 
   const getRemainingLabel = (tableId: string) => {
@@ -348,7 +369,7 @@ const TablesDashboardScreen: React.FC = () => {
         style={styles.content}
         contentContainerStyle={styles.listContent}
         data={tables}
-        keyExtractor={(t) => t.id}
+        keyExtractor={(t, index) => `${t.id}-${index}`}
         renderItem={renderTable}
         numColumns={1}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -367,62 +388,239 @@ const TablesDashboardScreen: React.FC = () => {
         onRequestClose={cancelReservationModal}
       >
         <View style={styles.reservationModalOverlay}>
-          <View style={styles.reservationModalContent}>
-            <Text style={styles.reservationTitle}>Reserve Table</Text>
-            <View style={styles.reservationRow}>
-              <TouchableOpacity
-                style={[styles.dayToggle, resDayOffset === 0 && styles.dayToggleActive]}
-                onPress={() => setResDayOffset(0)}
-              >
-                <Text style={[styles.dayToggleText, resDayOffset === 0 && styles.dayToggleTextActive]}>Today</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.dayToggle, resDayOffset === 1 && styles.dayToggleActive]}
-                onPress={() => setResDayOffset(1)}
-              >
-                <Text style={[styles.dayToggleText, resDayOffset === 1 && styles.dayToggleTextActive]}>Tomorrow</Text>
+          <View style={[styles.reservationModalContent, { maxHeight: 640, width: '95%', marginTop: -spacing.lg }]}> 
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Reserve Table</Text>
+              <TouchableOpacity onPress={cancelReservationModal}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-            <View style={styles.reservationRow}>
-              <TextInput
-                style={styles.timeInput}
-                placeholder="HH"
-                keyboardType="numeric"
-                value={resHour}
-                onChangeText={setResHour}
-                maxLength={2}
-                placeholderTextColor={colors.textSecondary}
-              />
-              <Text style={styles.colon}>:</Text>
-              <TextInput
-                style={styles.timeInput}
-                placeholder="MM"
-                keyboardType="numeric"
-                value={resMinute}
-                onChangeText={setResMinute}
-                maxLength={2}
-                placeholderTextColor={colors.textSecondary}
-              />
-              <TouchableOpacity
-                style={[styles.ampmToggle, resAmPm === 'AM' && styles.ampmToggleActive]}
-                onPress={() => setResAmPm('AM')}
-              >
-                <Text style={[styles.ampmText, resAmPm === 'AM' && styles.ampmTextActive]}>AM</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.ampmToggle, resAmPm === 'PM' && styles.ampmToggleActive]}
-                onPress={() => setResAmPm('PM')}
-              >
-                <Text style={[styles.ampmText, resAmPm === 'PM' && styles.ampmTextActive]}>PM</Text>
-              </TouchableOpacity>
+            <View style={{ padding: spacing.lg }}>
+              <View style={styles.reservationRow}>
+                <TouchableOpacity
+                  style={[styles.dayToggle, resDayOffset === 0 && styles.dayToggleActive]}
+                  onPress={() => setResDayOffset(0)}
+                >
+                  <Text style={[styles.dayToggleText, resDayOffset === 0 && styles.dayToggleTextActive]}>Today</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.dayToggle, resDayOffset === 1 && styles.dayToggleActive]}
+                  onPress={() => setResDayOffset(1)}
+                >
+                  <Text style={[styles.dayToggleText, resDayOffset === 1 && styles.dayToggleTextActive]}>Tomorrow</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.reservationRow}>
+                <Text style={styles.sectionLabel}>Select Customer</Text>
+              </View>
+              <View style={styles.reservationRow}>
+                <TextInput
+                  style={styles.textField}
+                  placeholder="Search customer by name or phone"
+                  value={customerSearchRes}
+                  onChangeText={setCustomerSearchRes}
+                  placeholderTextColor={colors.textSecondary}
+                />
+              </View>
+              <View style={{ marginBottom: spacing.md }}>
+                {Object.values(customers as any).length === 0 ? (
+                  <Text style={{ color: colors.textSecondary, textAlign: 'center' }}>No customers found. Add customers in the Customers section.</Text>
+                ) : (
+                  <ScrollView style={{ maxHeight: 140 }} showsVerticalScrollIndicator>
+                    {(Object.values(customers as any) as any[])
+                      .filter((c: any) => {
+                        const q = customerSearchRes.trim().toLowerCase();
+                        if (!q) return true;
+                        return ((c.name || '').toLowerCase().includes(q) || (c.phone || '').toLowerCase().includes(q));
+                      })
+                      .map((c: any, idx: number) => {
+                        const isSelected = selectedCustomerIdRes === c.id;
+                        return (
+                          <TouchableOpacity
+                            key={`${c.id}-${idx}`}
+                            onPress={() => setSelectedCustomerIdRes(c.id)}
+                            style={{
+                              paddingVertical: spacing.sm,
+                              paddingHorizontal: spacing.md,
+                              borderRadius: radius.md,
+                              borderWidth: 1,
+                              borderColor: isSelected ? colors.primary : colors.outline,
+                              backgroundColor: isSelected ? colors.primary + '10' : colors.surface,
+                              marginBottom: spacing.xs,
+                            }}
+                          >
+                            <Text style={{ color: colors.textPrimary, fontWeight: '600' }}>{c.name || c.phone || 'Unnamed'}</Text>
+                            {!!c.phone && (
+                              <Text style={{ color: colors.textSecondary, marginTop: 2 }}>{c.phone}</Text>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                  </ScrollView>
+                )}
+              </View>
+              <View style={styles.reservationRow}>
+                <Text style={styles.sectionLabel}>Note</Text>
+              </View>
+              <View style={styles.reservationRow}>
+                <TextInput
+                  style={[styles.textField, { height: 72, textAlignVertical: 'top' }]}
+                  placeholder="Note (optional)"
+                  value={resNote}
+                  onChangeText={setResNote}
+                  placeholderTextColor={colors.textSecondary}
+                  multiline
+                  numberOfLines={3}
+                />
+              </View>
+              <View style={[styles.reservationRow, { marginBottom: spacing.xs }] }>
+                <TextInput
+                  style={styles.timeInput}
+                  placeholder="HH"
+                  keyboardType="numeric"
+                  value={resHour}
+                  onChangeText={setResHour}
+                  maxLength={2}
+                  placeholderTextColor={colors.textSecondary}
+                />
+                <Text style={styles.colon}>:</Text>
+                <TextInput
+                  style={styles.timeInput}
+                  placeholder="MM"
+                  keyboardType="numeric"
+                  value={resMinute}
+                  onChangeText={setResMinute}
+                  maxLength={2}
+                  placeholderTextColor={colors.textSecondary}
+                />
+                <TouchableOpacity
+                  style={[styles.ampmToggle, resAmPm === 'AM' && styles.ampmToggleActive]}
+                  onPress={() => setResAmPm('AM')}
+                >
+                  <Text style={[styles.ampmText, resAmPm === 'AM' && styles.ampmTextActive]}>AM</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.ampmToggle, resAmPm === 'PM' && styles.ampmToggleActive]}
+                  onPress={() => setResAmPm('PM')}
+                >
+                  <Text style={[styles.ampmText, resAmPm === 'PM' && styles.ampmTextActive]}>PM</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <View style={styles.reservationActions}>
+            <View style={[styles.reservationActions, { paddingHorizontal: spacing.lg, marginTop: 0, paddingBottom: 0 }]}>
               <TouchableOpacity style={styles.reservationCancel} onPress={cancelReservationModal}>
                 <Text style={styles.reservationCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.reservationConfirm} onPress={confirmReservation}>
                 <Text style={styles.reservationConfirmText}>Reserve</Text>
               </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      {/* Themed Actions Modal (Long-press on Reserved Table) */}
+      <Modal
+        visible={actionsModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setActionsModalVisible(false)}
+      >
+        <View style={styles.reservationModalOverlay}>
+          <View style={styles.reservationModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Table Options</Text>
+              <TouchableOpacity onPress={() => setActionsModalVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ padding: spacing.lg }}>
+              <View style={styles.actionsList}>
+                <TouchableOpacity
+                  style={[styles.actionItem, { marginBottom: spacing.xs }]}
+                  onPress={() => {
+                    if (actionsTableId) {
+                      setDetailsTableId(actionsTableId);
+                      setDetailsModalVisible(true);
+                    }
+                    setActionsModalVisible(false);
+                  }}
+                >
+                  <Ionicons name="information-circle-outline" size={20} color={colors.textPrimary} style={styles.actionIcon} />
+                  <Text style={styles.actionItemText}>See details</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionItem, styles.actionItemDestructive]}
+                  onPress={() => {
+                    if (!actionsTableId) { setActionsModalVisible(false); return; }
+                    Alert.alert(
+                      'Unreserve Table',
+                      'Are you sure you want to remove this reservation?',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Unreserve', style: 'destructive', onPress: () => dispatch(unreserveTable({ id: actionsTableId })) },
+                      ]
+                    );
+                    setActionsModalVisible(false);
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={20} color={colors.danger} style={styles.actionIcon} />
+                  <Text style={[styles.actionItemText, { color: colors.danger }]}>Unreserve</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.reservationActions, { marginTop: spacing.md }] }>
+                <TouchableOpacity style={styles.reservationCancel} onPress={() => setActionsModalVisible(false)}>
+                  <Text style={styles.reservationCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      {/* Reservation Details Modal */}
+      <Modal
+        visible={detailsModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDetailsModalVisible(false)}
+      >
+        <View style={styles.reservationModalOverlay}>
+          <View style={styles.reservationModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Reservation Details</Text>
+              <TouchableOpacity onPress={() => setDetailsModalVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ padding: spacing.lg }} showsVerticalScrollIndicator={false}>
+              {(() => {
+                const t: any = activeTables.find(tt => tt.id === detailsTableId) as any;
+                if (!t) return <Text style={{ color: colors.textSecondary }}>Table not found.</Text>;
+                const tableName = t.name || detailsTableId;
+                const reservedBy = t.reservedBy || 'Unknown';
+                const note = t.reservedNote || '-';
+                const reservedAt = t.reservedAt ? new Date(t.reservedAt).toLocaleString() : '-';
+                const reservedUntil = t.reservedUntil ? new Date(t.reservedUntil).toLocaleString() : '-';
+                return (
+                  <View>
+                    <Text style={{ color: colors.textPrimary, fontWeight: '700', marginBottom: spacing.sm }}>{tableName}</Text>
+                    <View style={styles.reservationRow}><Text style={{ color: colors.textSecondary }}>Customer</Text><Text style={{ color: colors.textPrimary, fontWeight: '600' }}>{reservedBy}</Text></View>
+                    <View style={styles.reservationRow}><Text style={{ color: colors.textSecondary }}>Note</Text><Text style={{ color: colors.textPrimary, flexShrink: 1, textAlign: 'right' }}>{note}</Text></View>
+                    <View style={styles.reservationRow}><Text style={{ color: colors.textSecondary }}>Reserved At</Text><Text style={{ color: colors.textPrimary }}>{reservedAt}</Text></View>
+                    <View style={styles.reservationRow}><Text style={{ color: colors.textSecondary }}>Reserved Until</Text><Text style={{ color: colors.textPrimary }}>{reservedUntil}</Text></View>
+                  </View>
+                );
+              })()}
+            </ScrollView>
+            <View style={[styles.reservationActions, { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg }]}>
+              <TouchableOpacity style={styles.reservationCancel} onPress={() => setDetailsModalVisible(false)}>
+                <Text style={styles.reservationCancelText}>Close</Text>
+              </TouchableOpacity>
+              {detailsTableId && (
+                <TouchableOpacity style={styles.reservationConfirm} onPress={() => { dispatch(unreserveTable({ id: detailsTableId as string })); setDetailsModalVisible(false); }}>
+                  <Text style={styles.reservationConfirmText}>Unreserve</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>
@@ -655,6 +853,60 @@ const styles = StyleSheet.create({
   reservationConfirmText: {
     color: 'white',
     fontWeight: '700',
+  },
+  sectionLabel: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  textField: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    color: colors.textPrimary,
+    backgroundColor: colors.background,
+  },
+  actionsList: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+  },
+  actionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  actionItemDestructive: {
+    backgroundColor: colors.danger + '10',
+  },
+  actionIcon: {
+    marginRight: spacing.sm,
+  },
+  actionItemText: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Shared modal header styles for consistency
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.outline,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
   },
 });
 

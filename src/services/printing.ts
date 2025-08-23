@@ -189,23 +189,15 @@ export function generateReceiptHTML(receipt: ReceiptData): string {
       
       <div class="totals">
         <div class="total-row">
-          <span>Subtotal:</span>
+          <span>Sub Total:</span>
           <span>Rs ${receipt.subtotal.toFixed(2)}</span>
         </div>
         <div class="total-row">
-          <span>Tax (${((receipt.tax / receipt.subtotal) * 100).toFixed(1)}%):</span>
-          <span>Rs ${receipt.tax.toFixed(2)}</span>
-        </div>
-        <div class="total-row">
-          <span>Service Charge:</span>
-          <span>Rs ${receipt.serviceCharge.toFixed(2)}</span>
-        </div>
-        <div class="total-row">
           <span>Discount:</span>
-          <span>-Rs ${receipt.discount.toFixed(2)}</span>
+          <span>Rs ${receipt.discount.toFixed(2)}</span>
         </div>
         <div class="total-row" style="font-weight: bold; font-size: 14px;">
-          <span>TOTAL:</span>
+          <span>Grand Total:</span>
           <span>Rs ${receipt.total.toFixed(2)}</span>
         </div>
         <div class="total-row">
@@ -795,6 +787,7 @@ export class PrintService {
       const total = subtotal + tax + serviceCharge - discount;
 
       // Print via Bluetooth
+      const splitPayments = Array.isArray(order.payment?.splitPayments) ? order.payment.splitPayments.map((sp: any) => ({ method: sp.method, amount: Number(sp.amount) || 0 })) : undefined;
       await blePrinter.printReceipt({
         restaurantName: 'ARBI POS',
         receiptId: `R${Date.now()}`,
@@ -818,6 +811,7 @@ export class PrintService {
           amountPaid: order.payment.amountPaid,
           change: order.payment.amountPaid - total,
         } : null,
+        splitPayments,
       });
 
       return {
@@ -869,6 +863,8 @@ export class PrintService {
       }
 
       const subtotal = order.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
+      const discount = subtotal * ((order.discountPercentage || 0) / 100);
+      const total = Math.max(0, subtotal - discount);
 
       await blePrinter.printReceipt({
         restaurantName: 'ARBI POS',
@@ -886,8 +882,8 @@ export class PrintService {
         subtotal,
         tax: 0,
         service: 0,
-        discount: 0,
-        total: subtotal,
+        discount,
+        total,
         payment: null,
         isPreReceipt: true,
       });
@@ -1235,11 +1231,9 @@ export class PrintService {
       lines.push(`${name}${qty}   ${total}`);
     }
     lines.push('------------------------------');
-    lines.push(`Subtotal: ${receipt.subtotal.toFixed(1)}`);
-    lines.push(`Tax: ${receipt.tax.toFixed(1)}`);
-    lines.push(`Service: ${receipt.serviceCharge.toFixed(1)}`);
+    lines.push(`Sub Total: ${receipt.subtotal.toFixed(1)}`);
     lines.push(`Discount: ${receipt.discount.toFixed(1)}`);
-    lines.push(`TOTAL: ${receipt.total.toFixed(1)}`);
+    lines.push(`Grand Total: ${receipt.total.toFixed(1)}`);
     lines.push(`Payment Method: ${receipt.paymentMethod}`);
     return lines.join('\n');
   }

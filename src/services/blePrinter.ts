@@ -420,16 +420,10 @@ export const blePrinter = {
 			}
 			
 			printContent += '------------------------------\n';
-			printContent += `Subtotal: Rs. ${data.subtotal.toFixed(2)}\n`;
-			printContent += `${data.taxLabel}: Rs. ${data.tax.toFixed(2)}\n`;
-			printContent += `${data.serviceLabel}: Rs. ${data.service.toFixed(2)}\n`;
-			
-			if (data.discount && data.discount > 0) {
-				printContent += `Discount: -Rs. ${data.discount.toFixed(2)}\n`;
-			}
-			
+			printContent += `Sub Total: Rs. ${data.subtotal.toFixed(2)}\n`;
+			printContent += `Discount: Rs. ${(data.discount ?? 0).toFixed(2)}\n`;
 			printContent += '==============================\n';
-			printContent += `TOTAL: Rs. ${data.total.toFixed(2)}\n`;
+			printContent += `Grand Total: Rs. ${data.total.toFixed(2)}\n`;
 			
 			if (data.payment) {
 				printContent += '\nPAYMENT:\n';
@@ -465,6 +459,8 @@ export const blePrinter = {
 		discount?: number;
 		total: number;
 		payment?: { method: string; amountPaid: number; change: number } | null;
+		// Optional split lines
+		splitPayments?: Array<{ method: string; amount: number }>;
 		isPreReceipt?: boolean;
 	}): Promise<void> {
 		if (!this.isSupported()) {
@@ -502,8 +498,9 @@ export const blePrinter = {
 				}
 				
 				printContent += '------------------------------\n';
-				printContent += `Gross Amount: ${data.total.toFixed(1)}\n`;
-				printContent += `TOTAL: ${data.total.toFixed(1)}\n`;
+				printContent += `Sub Total: ${data.subtotal.toFixed(1)}\n`;
+				printContent += `Discount: ${(data.discount ?? 0).toFixed(1)}\n`;
+				printContent += `Grand Total: ${data.total.toFixed(1)}\n`;
 				
 				if (data.payment) {
 					printContent += `${data.payment.method}: ${data.payment.amountPaid.toFixed(1)}\n`;
@@ -597,11 +594,40 @@ export const blePrinter = {
 			}
 			
 			await BluetoothEscposPrinter.printText('------------------------------\n', {});
-			await BluetoothEscposPrinter.printText(`Gross Amount: ${data.total.toFixed(1)}\n`, {});
-			await BluetoothEscposPrinter.printText(`TOTAL: ${data.total.toFixed(1)}\n`, { widthtimes: 1, heighttimes: 1 });
+			await BluetoothEscposPrinter.printText(`Sub Total: ${data.subtotal.toFixed(1)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Discount: ${(data.discount ?? 0).toFixed(1)}\n`, {});
+			await BluetoothEscposPrinter.printText(`Grand Total: ${data.total.toFixed(1)}\n`, { widthtimes: 1, heighttimes: 1 });
 			
-			if (data.payment) {
+			// Enhanced payment display for split payments with credit
+			if (data.payment && data.payment.method === 'Split' && Array.isArray(data.splitPayments) && data.splitPayments.length > 0) {
+				// Calculate credit amount
+				const creditAmount = data.splitPayments
+					.filter((sp: any) => sp.method === 'Credit')
+					.reduce((sum: number, sp: any) => sum + (Number(sp.amount) || 0), 0);
+				
+				const cashAmount = data.splitPayments
+					.filter((sp: any) => sp.method !== 'Credit')
+					.reduce((sum: number, sp: any) => sum + (Number(sp.amount) || 0), 0);
+				
+				await BluetoothEscposPrinter.printText(`Order Total: ${data.total.toFixed(1)}\n`, {});
+				await BluetoothEscposPrinter.printText(`Amount Paid: ${cashAmount.toFixed(1)}\n`, {});
+				if (creditAmount > 0) {
+					await BluetoothEscposPrinter.printText(`Credit Amount: ${creditAmount.toFixed(1)}\n`, {});
+				}
+				
+				// Print split breakdown
+				await BluetoothEscposPrinter.printText('Split Breakdown:\n', {});
+				for (const sp of data.splitPayments) {
+					await BluetoothEscposPrinter.printText(`${sp.method}: ${sp.amount.toFixed(1)}\n`, {});
+				}
+			} else if (data.payment) {
 				await BluetoothEscposPrinter.printText(`${data.payment.method}: ${data.payment.amountPaid.toFixed(1)}\n`, {});
+			}
+			// Print split breakdown if present (legacy support)
+			if (Array.isArray(data.splitPayments) && data.splitPayments.length > 0 && (!data.payment || data.payment.method !== 'Split')) {
+				for (const sp of data.splitPayments) {
+					await BluetoothEscposPrinter.printText(`${sp.method}: ${sp.amount.toFixed(1)}\n`, {});
+				}
 			} else if (data.isPreReceipt) {
 				await BluetoothEscposPrinter.printText('Payment: Pending\n', {});
 				await BluetoothEscposPrinter.printText('Amount Due: Rs. ' + data.total.toFixed(1) + '\n', {});

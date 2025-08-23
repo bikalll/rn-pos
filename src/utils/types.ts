@@ -9,13 +9,18 @@
 };
 
 export type PaymentInfo = {
-  method: "Cash" | "Card" | "UPI" | "Bank Card" | "Bank" | "Fonepay" | "Credit";
+  method: "Cash" | "Card" | "UPI" | "Bank Card" | "Bank" | "Fonepay" | "Credit" | "Split";
   amount: number;
   amountPaid: number;
   change: number;
   customerName: string;
   customerPhone: string;
   timestamp: number;
+  // Optional breakdown for split payments
+  splitPayments?: Array<{
+    method: "Cash" | "Card" | "UPI" | "Bank Card" | "Bank" | "Fonepay" | "Credit";
+    amount: number;
+  }>;
 };
 
 export type OrderStatus = "ongoing" | "completed";
